@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xdf2bids"
+version = "0.1.0"
+description = "Convert multi-dimensional, cross-devices .xdf data files to BIDS compliant format"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+    {name = "Janik Pawlowski", email = "your.email@example.com"}
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "numpy",
+    "pandas",
+    "pyxdf",
+    "PyQt5"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "isort",
+    "flake8",
+]
+
+[project.scripts]
+xdf2bids = "xdf2bids.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/quantenquitte/xdf_processor"
+Repository = "https://github.com/quantenquitte/xdf_processor"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
