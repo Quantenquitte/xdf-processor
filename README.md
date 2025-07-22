@@ -29,5 +29,5 @@ process_xdf_file("input_file.xdf", "output_directory/")
 Install in development mode:
 
 ```bash
-pip install -e .[dev]
+pip install -e .
 ```
