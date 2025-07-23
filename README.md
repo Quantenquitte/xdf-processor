@@ -23,11 +23,3 @@ from xdf2bids import process_xdf_file
 
 process_xdf_file("input_file.xdf", "output_directory/")
 ```
-
-## Development
-
-Install in development mode:
-
-```bash
-pip install -e .
-```
