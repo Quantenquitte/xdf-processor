@@ -5,6 +5,8 @@ Convert multi-dimensional, cross-devices .xdf data files to BIDS compliant forma
 ## Installation
 
 ```bash
+clone the repository
+navigate to the xdf_processor folder
 pip install -e .
 ```
 
