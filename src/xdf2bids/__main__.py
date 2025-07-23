@@ -1,8 +1,13 @@
 """Command-line interface for xdf2bids."""
-from .xdf_processor import process_xdf_file, __version__
+import argparse
+
+from xdf2bids.xdf_processor import process_xdf_file, __version__
+
+INPUT_FILE = None
+OUTPUT_DIR = None
 
 def main():
-    import argparse
+    """Main function to handle command-line arguments and process XDF files."""
 
     parser = argparse.ArgumentParser(description="Convert XDF files to BIDS format.")
     parser.add_argument("input_file", type=str, help="Path to the input XDF file.")
