@@ -6,9 +6,9 @@ Convert multi-dimensional, cross-devices .xdf data files to BIDS compliant forma
 
 ```bash
 clone the repository
-navigate to the xdf_processor folder
 pip install -e .
 ```
+*Note: If you are using python <3.8 you will get an error message from the pyxdf module. Follow the instructions outlined in the terminal.
 
 ## Usage
 
