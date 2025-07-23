@@ -1,6 +1,7 @@
 # XDF2BIDS
 
-Convert multi-dimensional, cross-devices .xdf data files to BIDS compliant format.
+Reads .xdf files and returns data in a BIDS compliant format (.tsv for data and .json for metadata). It was designed to handle motion capture data from kinectv2, the wii balance board as well as eye tracking data. It returns the data for largest possible overlapping time window where all channels were recorded.
+It provides a separate json sidecar for each data file as well as a separate events file containing data from all detected marker streams.
 
 ## Installation
 
