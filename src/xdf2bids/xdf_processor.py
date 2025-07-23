@@ -17,13 +17,40 @@
 
 __version__ = "0.1.0"
 
-import os
-import numpy as np
-import pandas as pd
 import logging
-import pyxdf
+import os
 import json
 from typing import Dict, List, Tuple, Optional, Any
+
+import numpy as np
+import pandas as pd
+
+try:
+    import pyxdf
+except (ImportError, ModuleNotFoundError) as e:
+    error_msg = str(e)
+    if "importlib.metadata" in error_msg:
+        print("ERROR: pyxdf requires importlib.metadata which is not available in Python < 3.8")
+        print("SOLUTION: Please install the backport package:")
+        print("  pip install importlib-metadata")
+        print("\nOr upgrade to Python 3.8+")
+        print("\nAlternatively, if you have pyxdf source code, you can modify:")
+        print("  pyxdf/__init__.py line 6:")
+        print("  Change: from importlib.metadata import PackageNotFoundError, version")
+        print("  To:     from importlib_metadata import PackageNotFoundError, version")
+    else:
+        print(f"ERROR: Failed to import pyxdf: {error_msg}")
+        print("SOLUTION: Install pyxdf with: pip install pyxdf")
+    
+    # Create a dummy pyxdf module to prevent further import errors
+    class DummyPyXDF:
+        @staticmethod
+        def load_xdf(*args, **kwargs):
+            raise ImportError("pyxdf is not properly installed. See error message above.")
+    
+    import sys
+    sys.modules['pyxdf'] = DummyPyXDF()
+    pyxdf = DummyPyXDF()
 
 logger = logging.getLogger(__name__)
 
@@ -63,16 +90,24 @@ class XDFProcessor:
     def load_xdf(self, xdf_file: str = None) -> str:
         """Load XDF file"""
         if xdf_file is None:
-            from PyQt5.QtWidgets import QFileDialog, QApplication
-            app = QApplication([])
-            xdf_file, _ = QFileDialog.getOpenFileName(None, "Select XDF File", "", "XDF Files (*.xdf);;All Files (*)")
-            app.quit()
+            try:
+                from PyQt5.QtWidgets import QFileDialog, QApplication
+                app = QApplication([])
+                xdf_file, _ = QFileDialog.getOpenFileName(None, "Select XDF File", "", "XDF Files (*.xdf);;All Files (*)")
+                app.quit()
+            except ImportError:
+                raise ImportError("PyQt5 is required for file dialog. Install with: pip install PyQt5")
             
         if not os.path.exists(xdf_file):
             raise FileNotFoundError(f"XDF file not found: {xdf_file}")
         
         logger.info(f"Loading XDF file: {xdf_file}")
-        self.streams, self.header = pyxdf.load_xdf(xdf_file)
+        
+        try:
+            self.streams, self.header = pyxdf.load_xdf(xdf_file)
+        except ImportError as e:
+            raise ImportError(f"Failed to load XDF file due to pyxdf import error: {e}")
+        
         logger.info(f"Loaded {len(self.streams)} streams")
         
         self._organize_streams()

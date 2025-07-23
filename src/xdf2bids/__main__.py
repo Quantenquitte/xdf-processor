@@ -1,6 +1,5 @@
 """Command-line interface for xdf2bids."""
-
-from .xdf_processor import __version__, process_xdf_file
+from .xdf_processor import process_xdf_file, __version__
 
 def main():
     import argparse

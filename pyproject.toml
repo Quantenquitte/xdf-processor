@@ -7,7 +7,7 @@ name = "xdf2bids"
 version = "0.1.0"
 description = "Convert multi-dimensional, cross-devices .xdf data files to BIDS compliant format"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.7"
 authors = [
     {name = "Janik Pawlowski", email = "your.email@example.com"}
 ]
@@ -41,6 +41,7 @@ Repository = "https://github.com/quantenquitte/xdf_processor"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["xdf2bids*"]
 
 [tool.setuptools.package-dir]
 "" = "src"
