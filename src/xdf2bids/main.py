@@ -1,6 +1,6 @@
 """IDE interface for xdf2bids."""
 
-from xdf2bids.xdf_processor import process_xdf_file, __version__
+from .xdf_processor import process_xdf_file, __version__
 
 INPUT_FILES = ["test_file.xdf"]  # Example input files, replace with actual paths
 OUTPUT_DIR = None
