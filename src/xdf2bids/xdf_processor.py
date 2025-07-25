@@ -30,18 +30,18 @@ try:
 except (ImportError, ModuleNotFoundError) as e:
     error_msg = str(e)
     if "importlib.metadata" in error_msg:
-        print("ERROR: pyxdf requires importlib.metadata which is not available in Python < 3.8")
-        print("SOLUTION: Please install the backport package:")
-        print("  pip install importlib-metadata")
-        print("\nOr upgrade to Python 3.8+")
-        print("\nAlternatively, if you have pyxdf source code, you can modify:")
-        print("  pyxdf/__init__.py line 6:")
-        print("  Change: from importlib.metadata import PackageNotFoundError, version")
-        print("  To:     from importlib_metadata import PackageNotFoundError, version")
+        logging.error("ERROR: pyxdf requires importlib.metadata which is not available in Python < 3.8")
+        logging.info("SOLUTION: Please install the backport package:")
+        logging.info("  pip install importlib-metadata")
+        logging.info("\nOr upgrade to Python 3.8+")
+        logging.info("\nAlternatively, if you have pyxdf source code, you can modify:")
+        logging.info("  pyxdf/__init__.py line 6:")
+        logging.info("  Change: from importlib.metadata import PackageNotFoundError, version")
+        logging.info("  To:     from importlib_metadata import PackageNotFoundError, version")
     else:
-        print(f"ERROR: Failed to import pyxdf: {error_msg}")
-        print("SOLUTION: Install pyxdf with: pip install pyxdf")
-    
+        logging.error(f"ERROR: Failed to import pyxdf: {error_msg}")
+        logging.info("SOLUTION: Install pyxdf with: pip install pyxdf")
+
     # Create a dummy pyxdf module to prevent further import errors
     class DummyPyXDF:
         @staticmethod
@@ -417,11 +417,6 @@ class XDFProcessor:
                     timestamps = np.sort(timestamps)
                 else:
                     logger.debug(f"Timestamps for {stream_type} are monotonically increasing.")
-                print("=" * 20)
-                print("Relative time:", relative_time)
-                print("=" * 20)
-                print("timestamps:", timestamps)
-                print("=" * 20)
                 
                 # Prepare DataFrame
                 df_data = {'time': relative_time}
@@ -568,6 +563,6 @@ if __name__ == "__main__":
     processor = XDFProcessor()
     results = processor.preprocess_xdf(output_dir=SAVE_FOLDER)
     
-    print("Processing completed!")
-    print(f"Processed {results['processing_info']['data_streams_processed']} streams")
-    print(f"Found {results['processing_info']['events_found']} events")
+    logging.info("Processing completed!")
+    logging.info(f"Processed {results['processing_info']['data_streams_processed']} streams")
+    logging.info(f"Found {results['processing_info']['events_found']} events")
