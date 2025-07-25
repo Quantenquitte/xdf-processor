@@ -430,6 +430,45 @@ class XDFProcessor:
             raise ValueError("No global_t0 available. Run process_data() first.")
         return relative_timestamps + self.global_t0
 
+    def apply_relative_time_to_results(self, results: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convenience function to convert processed results to relative time format.
+        
+        This creates a copy of the results with all timestamps converted to relative time
+        (starting from 0) while preserving the original data.
+        
+        Args:
+            results: Results dictionary from process_data()
+            
+        Returns:
+            New results dictionary with relative timestamps
+        """
+        import copy
+        
+        # Create a deep copy to avoid modifying original data
+        relative_results = copy.deepcopy(results)
+        
+        global_t0 = results['time_window'][0]
+        
+        # Convert stream timestamps to relative time
+        for stream_type in relative_results['data']:
+            if stream_type.endswith('_timestamps'):
+                timestamps = relative_results['data'][stream_type]
+                relative_results['data'][stream_type] = timestamps - global_t0
+        
+        # Convert event timestamps to relative time
+        for event in relative_results['events']:
+            event['onset'] = event['onset'] - global_t0
+        
+        # Convert trial timestamps to relative time
+        for trial in relative_results['trials']:
+            trial['onset'] = trial['onset'] - global_t0
+        
+        # Mark as relative time
+        relative_results['use_relative_time'] = True
+        
+        return relative_results
+
     def export_to_bids(self, results: Dict[str, Any], output_path: str):
         """Export processed data to BIDS format"""
         base_path = os.path.splitext(output_path)[0]
@@ -446,13 +485,12 @@ class XDFProcessor:
                 timestamps = results['data'][f'{stream_type}_timestamps']
                 metadata = results['metadata'].get(stream_type, {})
                 
-                # Choose between relative or absolute timestamps
+                # Timestamps are already processed according to use_relative_time flag
+                time_column = timestamps
                 if use_relative_time:
-                    time_column = timestamps - global_t0
                     time_description = "Time relative to recording start"
                     start_time = float(time_column[0])
                 else:
-                    time_column = timestamps
                     time_description = "Absolute LSL timestamps"
                     start_time = float(timestamps[0])
                 
@@ -524,12 +562,10 @@ class XDFProcessor:
         if results['events']:
             df_events = pd.DataFrame(results['events'])
             
-            # Adjust event times based on relative time setting
+            # Events are already processed according to use_relative_time flag
             if use_relative_time:
-                df_events['onset'] = df_events['onset'] - global_t0
                 onset_description = "Event onset time relative to recording start"
             else:
-                # Keep absolute timestamps
                 onset_description = "Absolute LSL event onset time"
             
             # Save events TSV
@@ -555,11 +591,11 @@ class XDFProcessor:
             logger.info(f"Exported {len(df_events)} events ({'relative' if use_relative_time else 'absolute'} time)")
 
         # Export clean trials table
-        if hasattr(self, 'trials') and self.trials:
-            df_trials = pd.DataFrame(self.trials)
+        if results['trials']:
+            df_trials = pd.DataFrame(results['trials'])
             
+            # Trials are already processed according to use_relative_time flag
             if use_relative_time:
-                df_trials['onset'] = df_trials['onset'] - global_t0
                 trial_onset_description = "Trial start time relative to recording start"
             else:
                 trial_onset_description = "Absolute LSL trial start time"
@@ -598,11 +634,14 @@ class XDFProcessor:
         elif self.streams is None:
             xdf_file = self.load_xdf()
         
-        # Process data
+        # Process data (always preserves absolute timestamps)
         results = self.process_data()
         
-        # Store the relative time preference
-        results['use_relative_time'] = use_relative_time
+        # Apply relative time conversion if requested
+        if use_relative_time:
+            results = self.apply_relative_time_to_results(results)
+        else:
+            results['use_relative_time'] = False
         
         # Export if requested
         if output_dir:
