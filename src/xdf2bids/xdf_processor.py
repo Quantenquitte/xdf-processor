@@ -225,9 +225,19 @@ class XDFProcessor:
                 except (ValueError, IndexError):
                     continue
         
+        # Remove duplicate trials (can occur due to duplicate marker streams)
+        # Keep the last occurrence of each trial number
+        unique_trials = {}
+        for trial in self.trials:
+            trial_num = trial['trial_number']
+            if trial_num not in unique_trials or trial['onset'] > unique_trials[trial_num]['onset']:
+                unique_trials[trial_num] = trial
+        
+        self.trials = list(unique_trials.values())
+        
         # Sort trials by onset
         self.trials.sort(key=lambda x: x['onset'])
-        logger.info(f"Extracted {len(self.trials)} trials")
+        logger.info(f"Extracted {len(self.trials)} trials (removed duplicates)")
 
     def _get_channel_labels(self, stream: Dict[str, Any]) -> List[str]:
         """Extract channel labels with simplified parsing"""
@@ -512,9 +522,6 @@ class XDFProcessor:
         if hasattr(self, 'trials') and self.trials:
             df_trials = pd.DataFrame(self.trials)
             df_trials['onset'] = df_trials['onset'] - global_t0
-            
-            # Drop duplicate trial numbers
-            df_trials = df_trials.drop_duplicates(subset=['trial_number'], keep='last')
             
             trials_tsv = f"{base_path}_trials.tsv"
             df_trials.to_csv(trials_tsv, sep='\t', index=False, float_format='%.6f')
