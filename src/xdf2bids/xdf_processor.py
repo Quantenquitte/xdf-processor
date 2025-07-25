@@ -94,6 +94,7 @@ class XDFProcessor:
         self.data_streams = []
         self.marker_streams = []
         self.events = []
+        self.global_t0 = None  # Store global time offset for external access
 
     def load_xdf(self, xdf_file: str = None) -> str:
         """Load XDF file"""
@@ -355,6 +356,9 @@ class XDFProcessor:
         # Find overlap window
         start_time, end_time = self._find_overlap_window()
         
+        # Store global time offset for external access
+        self.global_t0 = start_time
+        
         # Process each data stream in the overlap window
         processed_data = {}
         stream_metadata = {}
@@ -402,6 +406,7 @@ class XDFProcessor:
             'events': self.events,  # All raw events
             'trials': getattr(self, 'trials', []),  # Clean trial table
             'time_window': (start_time, end_time),
+            'global_t0': self.global_t0,  # Global time offset for external use
             'processing_info': {
                 'data_streams_processed': len(processed_data),
                 'events_found': len(self.events),
@@ -413,10 +418,23 @@ class XDFProcessor:
         logger.info(f"Processed {len(processed_data)} data streams with {len(self.events)} events")
         return results
 
+    def convert_to_relative_time(self, absolute_timestamps: np.ndarray) -> np.ndarray:
+        """Convert absolute LSL timestamps to relative timestamps using stored global_t0"""
+        if self.global_t0 is None:
+            raise ValueError("No global_t0 available. Run process_data() first.")
+        return absolute_timestamps - self.global_t0
+    
+    def convert_to_absolute_time(self, relative_timestamps: np.ndarray) -> np.ndarray:
+        """Convert relative timestamps back to absolute LSL timestamps using stored global_t0"""
+        if self.global_t0 is None:
+            raise ValueError("No global_t0 available. Run process_data() first.")
+        return relative_timestamps + self.global_t0
+
     def export_to_bids(self, results: Dict[str, Any], output_path: str):
         """Export processed data to BIDS format"""
         base_path = os.path.splitext(output_path)[0]
         global_t0 = results['time_window'][0]
+        use_relative_time = results.get('use_relative_time', True)  # Default to relative time
         
         # Export data streams
         for stream_type in results['data']:
@@ -428,19 +446,26 @@ class XDFProcessor:
                 timestamps = results['data'][f'{stream_type}_timestamps']
                 metadata = results['metadata'].get(stream_type, {})
                 
-                # Create relative timestamps
-                relative_time = timestamps - global_t0
+                # Choose between relative or absolute timestamps
+                if use_relative_time:
+                    time_column = timestamps - global_t0
+                    time_description = "Time relative to recording start"
+                    start_time = float(time_column[0])
+                else:
+                    time_column = timestamps
+                    time_description = "Absolute LSL timestamps"
+                    start_time = float(timestamps[0])
                 
                 # Check if timestamps are monotonically increasing
-                if not np.all(np.diff(relative_time) >= 0):
+                if not np.all(np.diff(time_column) >= 0):
                     logger.warning(f"Timestamps for {stream_type} are not monotonically increasing. Adjusting...")
-                    relative_time = np.sort(relative_time)
+                    time_column = np.sort(time_column)
                     timestamps = np.sort(timestamps)
                 else:
                     logger.debug(f"Timestamps for {stream_type} are monotonically increasing.")
                 
                 # Prepare DataFrame
-                df_data = {'time': relative_time}
+                df_data = {'time': time_column}
                 
                 if stream_type == 'wii' and 'COP_x' in stream_data:
                     # Special handling for Wii data
@@ -476,13 +501,15 @@ class XDFProcessor:
                 json_path = f"{base_path}_{stream_type}.json"
                 sidecar = {
                     "SamplingFrequency": metadata.get('nominal_srate', 'n/a'),
-                    "StartTime": float(relative_time[0]),
+                    "StartTime": start_time,
                     "Columns": list(df.columns),
                     "StreamType": stream_type,
                     "StreamName": metadata.get('name', 'Unknown'),
                     "ChannelCount": metadata.get('channel_count', len(df.columns) - 1),
                     "Description": f"Data from {stream_type} stream",
                     "TimingInfo": {
+                        "use_relative_time": use_relative_time,
+                        "time_description": time_description,
                         "global_t0": float(global_t0),
                         "time_window": results['time_window']
                     }
@@ -491,14 +518,19 @@ class XDFProcessor:
                 with open(json_path, 'w') as f:
                     json.dump(sidecar, f, indent=2)
                 
-                logger.info(f"Exported {stream_type}: {len(df)} samples")
+                logger.info(f"Exported {stream_type}: {len(df)} samples ({'relative' if use_relative_time else 'absolute'} time)")
         
         # Export events
         if results['events']:
             df_events = pd.DataFrame(results['events'])
             
-            # Adjust event times to be relative to global t0
-            df_events['onset'] = df_events['onset'] - global_t0
+            # Adjust event times based on relative time setting
+            if use_relative_time:
+                df_events['onset'] = df_events['onset'] - global_t0
+                onset_description = "Event onset time relative to recording start"
+            else:
+                # Keep absolute timestamps
+                onset_description = "Absolute LSL event onset time"
             
             # Save events TSV
             events_tsv = f"{base_path}_events.tsv"
@@ -507,21 +539,30 @@ class XDFProcessor:
             # Save events JSON
             events_json = f"{base_path}_events.json"
             events_sidecar = {
-                "onset": {"Description": "Event onset time in seconds", "Units": "seconds"},
+                "onset": {"Description": onset_description, "Units": "seconds"},
                 "duration": {"Description": "Event duration in seconds", "Units": "seconds"},
                 "event_type": {"Description": "Type of event or marker"},
-                "source": {"Description": "Source stream name"}
+                "source": {"Description": "Source stream name"},
+                "timing_info": {
+                    "use_relative_time": use_relative_time,
+                    "global_t0": float(global_t0) if use_relative_time else None
+                }
             }
             
             with open(events_json, 'w') as f:
                 json.dump(events_sidecar, f, indent=2)
             
-            logger.info(f"Exported {len(df_events)} events")
+            logger.info(f"Exported {len(df_events)} events ({'relative' if use_relative_time else 'absolute'} time)")
 
         # Export clean trials table
         if hasattr(self, 'trials') and self.trials:
             df_trials = pd.DataFrame(self.trials)
-            df_trials['onset'] = df_trials['onset'] - global_t0
+            
+            if use_relative_time:
+                df_trials['onset'] = df_trials['onset'] - global_t0
+                trial_onset_description = "Trial start time relative to recording start"
+            else:
+                trial_onset_description = "Absolute LSL trial start time"
             
             trials_tsv = f"{base_path}_trials.tsv"
             df_trials.to_csv(trials_tsv, sep='\t', index=False, float_format='%.6f')
@@ -529,18 +570,28 @@ class XDFProcessor:
             trials_json = f"{base_path}_trials.json"
             trials_sidecar = {
                 "trial_number": {"Description": "Trial number (0-indexed)"},
-                "onset": {"Description": "Trial start time in seconds", "Units": "seconds"},
+                "onset": {"Description": trial_onset_description, "Units": "seconds"},
                 "duration": {"Description": "Trial duration in seconds", "Units": "seconds"},
-                "trial_type": {"Description": "Type of trial"}
+                "trial_type": {"Description": "Type of trial"},
+                "timing_info": {
+                    "use_relative_time": use_relative_time,
+                    "global_t0": float(global_t0) if use_relative_time else None
+                }
             }
             
             with open(trials_json, 'w') as f:
                 json.dump(trials_sidecar, f, indent=2)
             
-            logger.info(f"Exported {len(df_trials)} clean trials")
+            logger.info(f"Exported {len(df_trials)} clean trials ({'relative' if use_relative_time else 'absolute'} time)")
 
-    def preprocess_xdf(self, xdf_file: str = None, output_dir: str = None) -> Dict[str, Any]:
-        """Complete preprocessing pipeline"""
+    def preprocess_xdf(self, xdf_file: str = None, output_dir: str = None, use_relative_time: bool = True) -> Dict[str, Any]:
+        """Complete preprocessing pipeline
+        
+        Args:
+            xdf_file: Path to XDF file to process
+            output_dir: Directory to export BIDS files to
+            use_relative_time: If True, timestamps start from 0. If False, use absolute LSL timestamps
+        """
         # Load data
         if xdf_file:
             xdf_file = self.load_xdf(xdf_file)
@@ -549,6 +600,9 @@ class XDFProcessor:
         
         # Process data
         results = self.process_data()
+        
+        # Store the relative time preference
+        results['use_relative_time'] = use_relative_time
         
         # Export if requested
         if output_dir:
@@ -562,10 +616,18 @@ class XDFProcessor:
 
 
 # Convenience function
-def process_xdf_file(xdf_file: str, output_dir: str = None, **kwargs) -> Dict[str, Any]:
-    """Simple function to process an XDF file"""
+def process_xdf_file(xdf_file: str, output_dir: str = None, use_relative_time: bool = True, **kwargs) -> Dict[str, Any]:
+    """
+    Simple function to process an XDF file
+    
+    Args:
+        xdf_file: Path to XDF file
+        output_dir: Output directory
+        use_relative_time: If True, time starts at 0. If False, uses absolute LSL timestamps.
+        **kwargs: Additional arguments passed to XDFProcessor
+    """
     processor = XDFProcessor(**kwargs)
-    return processor.preprocess_xdf(xdf_file, output_dir)
+    return processor.preprocess_xdf(xdf_file, output_dir, use_relative_time=use_relative_time)
 
 
 if __name__ == "__main__":
