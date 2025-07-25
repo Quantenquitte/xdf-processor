@@ -40,10 +40,15 @@ except (ImportError, ModuleNotFoundError) as e:
     pyxdf = DummyPyXDF()
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG) # console output
+logger.addHandler(logging.StreamHandler())
+
 
 SAVE_FOLDER = 'data/preprocessed'
 WII_BOARD_WIDTH = 43.3  # cm
 WII_BOARD_LENGTH = 23.8  # cm
+
+TRIAL_END_PATTERN = 'TRIAL_END'
 
 
 class XDFProcessor:
@@ -55,7 +60,7 @@ class XDFProcessor:
         
         # Device-specific Parameters
         self.WII_BOARD_DIMENSIONS = kwargs.get('WII_BOARD_DIMENSIONS', (WII_BOARD_WIDTH, WII_BOARD_LENGTH)) # Wii Balance Board dimensions in cm
-
+    
         # Basic stream identification patterns
         self.stream_patterns = {
             'wii': ['wiiuse', 'wii'],
@@ -66,7 +71,10 @@ class XDFProcessor:
         }
         if 'stream_patterns' in kwargs:
             self.stream_patterns.update(kwargs['stream_patterns'])
-        
+
+        # Ensure patterns are lowercase for consistency
+        self.stream_patterns = {k: [p.lower() for p in v] for k, v in self.stream_patterns.items()}
+            
         # Data storage
         self.streams = None
         self.header = None
@@ -160,13 +168,53 @@ class XDFProcessor:
                         self.events.append({
                             'onset': timestamps[i],
                             'duration': 0.0,
-                            'trial_type': str(marker[0]),
+                            'event_type': str(marker[0]),
                             'source': stream_name
                         })
         
         # Sort by onset time
         self.events.sort(key=lambda x: x['onset'])
         logger.info(f"Extracted {len(self.events)} events")
+
+    def _extract_trials_from_events(self):
+        """Extract trial information and keep all events"""
+        
+        # Keep all events as-is for transparency
+        # Just sort them by onset time
+        self.events.sort(key=lambda x: x['onset'])
+        logger.info(f"Kept {len(self.events)} raw events")
+        
+        # Extract clean trial information
+        self.trials = []
+        
+        for event in self.events:
+            event_type = event['event_type']
+            onset = event['onset']
+            
+            # Extract trial info from TRIAL_END events with duration info
+            if 'TRIAL_END:' in event_type and ':duration=' in event_type:
+                try:
+                    # Parse: "TRIAL_END:1:time=1252.1662882:duration=45.00090410000007"
+                    parts = event_type.split(':')
+                    trial_num = int(parts[1])
+                    duration = float(parts[3].replace('duration=', ''))
+                    
+                    # Calculate trial start time
+                    trial_start = onset - duration
+                    
+                    self.trials.append({
+                        'onset': trial_start,
+                        'duration': duration,
+                        'trial_type': f'trial_{trial_num}',
+                        'trial_number': trial_num
+                    })
+                    
+                except (ValueError, IndexError):
+                    continue
+        
+        # Sort trials by onset
+        self.trials.sort(key=lambda x: x['onset'])
+        logger.info(f"Extracted {len(self.trials)} trials")
 
     def _get_channel_labels(self, stream: Dict[str, Any]) -> List[str]:
         """Extract channel labels with simplified parsing"""
@@ -250,10 +298,10 @@ class XDFProcessor:
         
         if not start_times:
             return 0.0, 1.0
-        
+
         overlap_start = max(start_times)  # Latest start
         overlap_end = min(end_times)      # Earliest end
-        
+
         if overlap_start <= overlap_end:
             logger.info(f"Overlap window: {overlap_start:.3f} to {overlap_end:.3f} seconds ({overlap_end-overlap_start:.3f}s duration)")
             return overlap_start, overlap_end
@@ -268,6 +316,7 @@ class XDFProcessor:
         
         # Extract events
         self._extract_events()
+        self._extract_trials_from_events()
         
         # Find overlap window
         start_time, end_time = self._find_overlap_window()
@@ -316,11 +365,13 @@ class XDFProcessor:
         results = {
             'data': processed_data,
             'metadata': stream_metadata,
-            'events': self.events,
+            'events': self.events,  # All raw events
+            'trials': getattr(self, 'trials', []),  # Clean trial table
             'time_window': (start_time, end_time),
             'processing_info': {
                 'data_streams_processed': len(processed_data),
                 'events_found': len(self.events),
+                'trials_found': len(getattr(self, 'trials', [])),
                 'duration': end_time - start_time
             }
         }
@@ -346,6 +397,19 @@ class XDFProcessor:
                 # Create relative timestamps
                 relative_time = timestamps - global_t0
                 
+                # Check if timestamps are monotonically increasing
+                if not np.all(np.diff(relative_time) >= 0):
+                    logger.warning(f"Timestamps for {stream_type} are not monotonically increasing. Adjusting...")
+                    relative_time = np.sort(relative_time)
+                    timestamps = np.sort(timestamps)
+                else:
+                    logger.debug(f"Timestamps for {stream_type} are monotonically increasing.")
+                print("=" * 20)
+                print("Relative time:", relative_time)
+                print("=" * 20)
+                print("timestamps:", timestamps)
+                print("=" * 20)
+                
                 # Prepare DataFrame
                 df_data = {'time': relative_time}
                 
@@ -370,6 +434,13 @@ class XDFProcessor:
                                 col_name = channel_labels[ch].replace(' ', '_')
                             else:
                                 col_name = f'channel_{ch+1}'
+                            
+                            # Avoid overwriting the computed 'time' column with data channels
+                            # If a data channel is labeled 'time', rename it to avoid collision
+                            if col_name == 'time':
+                                col_name = 'trial_time'
+                                logger.warning(f"Renamed data channel 'time' to 'trial_time' to avoid collision with LSL timestamps")
+                            
                             df_data[col_name] = raw_data[:, ch]
                 
                 df = pd.DataFrame(df_data)
@@ -415,7 +486,7 @@ class XDFProcessor:
             events_sidecar = {
                 "onset": {"Description": "Event onset time in seconds", "Units": "seconds"},
                 "duration": {"Description": "Event duration in seconds", "Units": "seconds"},
-                "trial_type": {"Description": "Type of event or marker"},
+                "event_type": {"Description": "Type of event or marker"},
                 "source": {"Description": "Source stream name"}
             }
             
@@ -423,6 +494,30 @@ class XDFProcessor:
                 json.dump(events_sidecar, f, indent=2)
             
             logger.info(f"Exported {len(df_events)} events")
+
+        # Export clean trials table
+        if hasattr(self, 'trials') and self.trials:
+            df_trials = pd.DataFrame(self.trials)
+            df_trials['onset'] = df_trials['onset'] - global_t0
+            
+            # Drop duplicate trial numbers
+            df_trials = df_trials.drop_duplicates(subset=['trial_number'], keep='last')
+            
+            trials_tsv = f"{base_path}_trials.tsv"
+            df_trials.to_csv(trials_tsv, sep='\t', index=False, float_format='%.6f')
+            
+            trials_json = f"{base_path}_trials.json"
+            trials_sidecar = {
+                "trial_number": {"Description": "Trial number (0-indexed)"},
+                "onset": {"Description": "Trial start time in seconds", "Units": "seconds"},
+                "duration": {"Description": "Trial duration in seconds", "Units": "seconds"},
+                "trial_type": {"Description": "Type of trial"}
+            }
+            
+            with open(trials_json, 'w') as f:
+                json.dump(trials_sidecar, f, indent=2)
+            
+            logger.info(f"Exported {len(df_trials)} clean trials")
 
     def preprocess_xdf(self, xdf_file: str = None, output_dir: str = None) -> Dict[str, Any]:
         """Complete preprocessing pipeline"""
@@ -463,5 +558,3 @@ if __name__ == "__main__":
     print("Processing completed!")
     print(f"Processed {results['processing_info']['data_streams_processed']} streams")
     print(f"Found {results['processing_info']['events_found']} events")
-
-
