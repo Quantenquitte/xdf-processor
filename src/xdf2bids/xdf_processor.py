@@ -255,7 +255,18 @@ class XDFProcessor:
             while len(channel_labels) < ch_count:
                 channel_labels.append(f"Channel_{len(channel_labels)+1}")
             
-            return channel_labels[:ch_count]
+            # Fix potential collision with LSL timestamp column
+            # If any data channel is labeled 'time', rename it to avoid collision
+            fixed_labels = []
+            for label in channel_labels[:ch_count]:
+                if label.lower() == 'time':
+                    fixed_label = 'trial_time'
+                    logger.warning(f"Renamed data channel '{label}' to '{fixed_label}' to avoid collision with LSL timestamps")
+                    fixed_labels.append(fixed_label)
+                else:
+                    fixed_labels.append(label)
+            
+            return fixed_labels
             
         except Exception as e:
             logger.warning(f"Error extracting channel labels: {e}")
@@ -442,12 +453,6 @@ class XDFProcessor:
                                 col_name = channel_labels[ch].replace(' ', '_')
                             else:
                                 col_name = f'channel_{ch+1}'
-                            
-                            # Avoid overwriting the computed 'time' column with data channels
-                            # If a data channel is labeled 'time', rename it to avoid collision
-                            if col_name == 'time':
-                                col_name = 'trial_time'
-                                logger.warning(f"Renamed data channel 'time' to 'trial_time' to avoid collision with LSL timestamps")
                             
                             df_data[col_name] = raw_data[:, ch]
                 
