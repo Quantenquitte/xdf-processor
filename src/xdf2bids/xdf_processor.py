@@ -62,6 +62,7 @@ WII_BOARD_WIDTH = 43.3  # cm
 WII_BOARD_LENGTH = 23.8  # cm
 
 TRIAL_END_PATTERN = 'TRIAL_END'
+TRIAL_META_PATTERNS = ['trial_type', 'trial_name']
 
 
 class XDFProcessor:
@@ -80,7 +81,8 @@ class XDFProcessor:
             'kinect': ['kinect', 'mocap'],
             'eye_tracker': ['pupil', 'eye'],
             'stimulus': ['vr_bodysway', 'stimulus', 'stim'],
-            'marker': ['marker', 'event', 'trigger']
+            'marker': ['marker', 'event', 'trigger'],
+            'meta': ['meta', 'info', 'metadata'],
         }
         if 'stream_patterns' in kwargs:
             self.stream_patterns.update(kwargs['stream_patterns'])
@@ -94,6 +96,7 @@ class XDFProcessor:
         self.data_streams = []
         self.marker_streams = []
         self.events = []
+        self.meta = []
         self.global_t0 = None  # Store global time offset for external access
 
     def load_xdf(self, xdf_file: str = None) -> str:
@@ -126,14 +129,20 @@ class XDFProcessor:
         """Organize streams into data and marker streams"""
         self.data_streams = []
         self.marker_streams = []
+        self.meta_streams = []
         
         for stream in self.streams:
-            if self._is_marker_stream(stream):
+                
+            if self._is_meta_stream(stream):
+                self.meta_streams.append(stream)
+            
+            elif self._is_marker_stream(stream):
                 self.marker_streams.append(stream)
+                
             else:
                 self.data_streams.append(stream)
-        
-        logger.info(f"Found {len(self.data_streams)} data streams and {len(self.marker_streams)} marker streams")
+
+        logger.info(f"Found {len(self.data_streams)} data streams, {len(self.marker_streams)} marker streams, {len(self.meta_streams)} meta streams")
 
     def _is_marker_stream(self, stream: Dict[str, Any]) -> bool:
         """Simple check if stream is a marker stream"""
@@ -145,17 +154,17 @@ class XDFProcessor:
             return True
         if any(indicator in stream_name for indicator in self.stream_patterns['marker']):
             return True
-            
-        # Check if data is string-based (typical for markers)
-        time_series = stream.get('time_series', [])
-        if isinstance(time_series, list) and len(time_series) > 0:
-            first_sample = time_series[0]
-            if isinstance(first_sample, (list, tuple)) and len(first_sample) > 0:
-                if isinstance(first_sample[0], str):
-                    return True
         
         return False
 
+    def _is_meta_stream(self, stream: Dict[str, Any]) -> bool:
+        """Check if stream is a metadata stream"""
+        stream_type = stream['info'].get('type', [''])[0].lower()
+        stream_name = stream['info'].get('name', [''])[0].lower()
+        
+        return any(indicator in stream_type for indicator in self.stream_patterns['meta']) or \
+               any(indicator in stream_name for indicator in self.stream_patterns['meta'])
+    
     def _classify_stream(self, stream: Dict[str, Any]) -> str:
         """Classify stream type based on name patterns"""
         stream_name = stream['info'].get('name', [''])[0].lower()
@@ -190,7 +199,37 @@ class XDFProcessor:
         self.events.sort(key=lambda x: x['onset'])
         logger.info(f"Extracted {len(self.events)} events")
 
-    def _extract_trials_from_events(self):
+    def _extract_meta(self):
+        """Extract metadata from meta streams"""
+        self.meta = []
+        
+        for idx, stream in enumerate(self.meta_streams):
+            stream_name = stream['info'].get('name', [f'MetaStream_{idx}'])[0]
+            
+            if 'time_stamps' in stream and 'time_series' in stream:
+                timestamps = stream['time_stamps']
+                meta_data = stream['time_series']
+                
+                for i, data in enumerate(meta_data):
+                    if len(data) > 0:
+                        self.meta.append({
+                            'onset': timestamps[i],
+                            'data': data, 
+                            'source': stream_name
+                        })
+        self.meta.sort(key=lambda x: x['onset'])
+        
+        ### Find Trial Information from meta events
+        # Remove duplicates based on onset time
+        meta_df = pd.DataFrame(self.meta)
+        meta_df.drop_duplicates(subset='onset', inplace=True)
+        
+        # Filter for trial-related events
+        trial_events = meta_df[meta_df['data'].apply(lambda x: isinstance(x, str) and TRIAL_META_PATTERN in x)]
+        
+        logger.info(f"Extracted {len(self.meta)} meta events")
+
+    def _extract_trials_from_events(self, from_meta_events: bool = False):
         """Extract trial information and keep all events"""
         
         # Keep all events as-is for transparency
@@ -200,31 +239,36 @@ class XDFProcessor:
         
         # Extract clean trial information
         self.trials = []
+        if from_meta_events:
+            logger.info("Extracting trials from meta events")
+            for event in self.meta:
+                pass
         
-        for event in self.events:
-            event_type = event['event_type']
-            onset = event['onset']
-            
-            # Extract trial info from TRIAL_END events with duration info
-            if 'TRIAL_END:' in event_type and ':duration=' in event_type:
-                try:
-                    # Parse: "TRIAL_END:1:time=1252.1662882:duration=45.00090410000007"
-                    parts = event_type.split(':')
-                    trial_num = int(parts[1])
-                    duration = float(parts[3].replace('duration=', ''))
-                    
-                    # Calculate trial start time
-                    trial_start = onset - duration
-                    
-                    self.trials.append({
-                        'onset': trial_start,
-                        'duration': duration,
-                        'trial_type': f'trial_{trial_num}',
-                        'trial_number': trial_num
-                    })
-                    
-                except (ValueError, IndexError):
-                    continue
+        else:
+            for event in self.events:
+                event_type = event['event_type']
+                onset = event['onset']
+                
+                # Extract trial info from TRIAL_END events with duration info
+                if 'TRIAL_END:' in event_type and ':duration=' in event_type:
+                    try:
+                        # Parse: "TRIAL_END:1:time=1252.1662882:duration=45.00090410000007"
+                        parts = event_type.split(':')
+                        trial_num = int(parts[1])
+                        duration = float(parts[3].replace('duration=', ''))
+                        
+                        # Calculate trial start time
+                        trial_start = onset - duration
+                        
+                        self.trials.append({
+                            'onset': trial_start,
+                            'duration': duration,
+                            'trial_type': f'trial_{trial_num}',
+                            'trial_number': trial_num
+                        })
+                        
+                    except (ValueError, IndexError):
+                        continue
         
         # Remove duplicate trials (can occur due to duplicate marker streams)
         # Keep the last occurrence of each trial number
@@ -239,6 +283,70 @@ class XDFProcessor:
         # Sort trials by onset
         self.trials.sort(key=lambda x: x['onset'])
         logger.info(f"Extracted {len(self.trials)} trials (removed duplicates)")
+
+    def _extract_perturbations_from_events(self) -> List[Dict[str, Any]]:
+        """Extract perturbation events from the event list"""
+        perturbation_starts = []
+        perturbation_ends = []
+        
+        for event in self.events:
+            if 'perturbation_start' in event['event_type'].lower():
+                perturbation_starts.append({
+                    'onset': event['onset'],
+                    'duration': 0.0,  # Duration will be calculated later
+                    'event_type': event['event_type'],
+                    'source': event['source']
+                })
+            elif 'perturbation_end' in event['event_type'].lower():
+                perturbation_ends.append({
+                    'onset': event['onset'],
+                    'duration': 0.0,  # Duration will be calculated later
+                    'event_type': event['event_type'],
+                    'source': event['source']
+                })
+
+        # Sort perturbations by onset time
+        perturbation_starts.sort(key=lambda x: x['onset'])
+        perturbation_ends.sort(key=lambda x: x['onset'])
+
+        # Remove duplicates: if onset times are very close, keep only the first occurrence
+        def deduplicate_on_onset(events, atol=1e-6):
+            deduped = []
+            for ev in events:
+                onset = ev['onset']
+                if not any(np.isclose(onset, prev['onset'], atol=atol) for prev in deduped):
+                    deduped.append(ev)
+            return deduped
+
+        perturbation_starts = deduplicate_on_onset(perturbation_starts)
+        perturbation_ends = deduplicate_on_onset(perturbation_ends)
+
+        try:
+            assert len(perturbation_starts) == len(perturbation_ends), "Mismatched perturbation start/end counts"
+            
+            for start, end in zip(perturbation_starts, perturbation_ends):
+                start['duration'] = end['onset'] - start['onset']
+                start['event_type'] = 'perturbation'
+                start['source'] = start['source']
+
+            self.perturbations = perturbation_starts
+            logger.info(f"Extracted {len(self.perturbations)} perturbation events")
+
+        except AssertionError as e:
+            logger.warning(f"Mismatched perturbation start/end counts: {e}")
+            if len(perturbation_starts) - len(perturbation_ends) == 1:
+                logger.warning("Possible missing perturbation end event, using last start as end")
+                
+                for start, end in zip(perturbation_starts, perturbation_ends + [perturbation_starts[-1]]):
+                    start['duration'] = end['onset'] - start['onset']
+                    start['event_type'] = 'perturbation'
+                    start['source'] = start['source']
+                self.perturbations = perturbation_starts
+            else:
+                logger.error(f"Unable to resolve perturbation events due to mismatched counts: {e}")
+                logger.info("Number of starts: {}, Number of ends: {}".format(
+                    len(perturbation_starts), len(perturbation_ends)))
+                self.perturbations = []
 
     def _get_channel_labels(self, stream: Dict[str, Any]) -> List[str]:
         """Extract channel labels with simplified parsing"""
@@ -351,7 +459,9 @@ class XDFProcessor:
         
         # Extract events
         self._extract_events()
+        self._extract_meta()
         self._extract_trials_from_events()
+        self._extract_perturbations_from_events()
         
         # Find overlap window
         start_time, end_time = self._find_overlap_window()
@@ -404,7 +514,9 @@ class XDFProcessor:
             'data': processed_data,
             'metadata': stream_metadata,
             'events': self.events,  # All raw events
+            'meta': self.meta,  # All raw meta events
             'trials': getattr(self, 'trials', []),  # Clean trial table
+            'perturbations': getattr(self, 'perturbations', []),  # Clean perturbation events
             'time_window': (start_time, end_time),
             'global_t0': self.global_t0,  # Global time offset for external use
             'processing_info': {
@@ -459,10 +571,18 @@ class XDFProcessor:
         # Convert event timestamps to relative time
         for event in relative_results['events']:
             event['onset'] = event['onset'] - global_t0
-        
+            
+        # Convert meta event timestamps to relative time
+        for meta_event in relative_results['meta']:
+            meta_event['onset'] = meta_event['onset'] - global_t0
+            
         # Convert trial timestamps to relative time
         for trial in relative_results['trials']:
             trial['onset'] = trial['onset'] - global_t0
+        
+        # Convert perturbation timestamps to relative time
+        for perturbation in relative_results['perturbations']:
+            perturbation['onset'] = perturbation['onset'] - global_t0
         
         # Mark as relative time
         relative_results['use_relative_time'] = True
@@ -619,6 +739,58 @@ class XDFProcessor:
                 json.dump(trials_sidecar, f, indent=2)
             
             logger.info(f"Exported {len(df_trials)} clean trials ({'relative' if use_relative_time else 'absolute'} time)")
+        # Export perturbations
+        if results['perturbations']:
+            df_perturbations = pd.DataFrame(results['perturbations'])
+            perturbations_tsv = f"{base_path}_perturbations.tsv"
+            df_perturbations.to_csv(perturbations_tsv, sep='\t', index=False, float_format='%.6f')
+
+            perturbations_json = f"{base_path}_perturbations.json"
+            perturbations_sidecar = {
+                "onset": {"Description": "Perturbation onset time", "Units": "seconds"},
+                "duration": {"Description": "Perturbation duration in seconds", "Units": "seconds"},
+                "perturbation_type": {"Description": "Type of perturbation"},
+                "timing_info": {
+                    "use_relative_time": use_relative_time,
+                    "global_t0": float(global_t0) if use_relative_time else None
+                }
+            }
+
+            with open(perturbations_json, 'w') as f:
+                json.dump(perturbations_sidecar, f, indent=2)
+
+            logger.info(f"Exported {len(df_perturbations)} perturbations ({'relative' if use_relative_time else 'absolute'} time)")
+        
+        if results['meta']:
+            df_meta = pd.DataFrame(results['meta'])
+            meta_tsv = f"{base_path}_meta.tsv"
+            df_meta.to_csv(meta_tsv, sep='\t', index=False, float_format='%.6f')
+
+            meta_json = f"{base_path}_meta.json"
+            meta_sidecar = {
+                "onset": {"Description": "Metadata event onset time", "Units": "seconds"},
+                "data": {"Description": "Metadata content"},
+                "source": {"Description": "Source stream name"},
+                "timing_info": {
+                    "use_relative_time": use_relative_time,
+                    "global_t0": float(global_t0) if use_relative_time else None
+                }
+            }
+
+            with open(meta_json, 'w') as f:
+                json.dump(meta_sidecar, f, indent=2)
+
+            logger.info(f"Exported {len(df_meta)} metadata events ({'relative' if use_relative_time else 'absolute'} time)")
+        # Save global metadata
+        global_metadata = {
+            "global_t0": float(global_t0) if use_relative_time else None,
+            "use_relative_time": use_relative_time,
+            "time_window": results['time_window'],
+            "processing_info": results['processing_info']
+        }
+        global_json = f"{base_path}_global.json"
+        with open(global_json, 'w') as f:
+            json.dump(global_metadata, f, indent=2)
 
     def preprocess_xdf(self, xdf_file: str = None, output_dir: str = None, use_relative_time: bool = True) -> Dict[str, Any]:
         """Complete preprocessing pipeline
