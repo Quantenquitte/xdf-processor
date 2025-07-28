@@ -716,7 +716,10 @@ class XDFProcessor:
                 onset_description = "Event onset time relative to recording start"
             else:
                 onset_description = "Absolute LSL event onset time"
-            
+
+            if 'event_type' in df_events.columns and 'label' in df_events.columns:
+                df_events.drop(columns='event_type', inplace=True)  # Remove 'event_type' column if exists
+
             # Save events TSV
             events_tsv = f"{base_path}_events.tsv"
             df_events.to_csv(events_tsv, sep='\t', index=False, float_format='%.6f')
@@ -726,7 +729,7 @@ class XDFProcessor:
             events_sidecar = {
                 "onset": {"Description": onset_description, "Units": "seconds"},
                 "duration": {"Description": "Event duration in seconds", "Units": "seconds"},
-                "event_type": {"Description": "Type of event or marker"},
+                "event_type/label": {"Description": "Type of event or marker"},
                 "source": {"Description": "Source stream name"},
                 "timing_info": {
                     "use_relative_time": use_relative_time,
@@ -792,6 +795,8 @@ class XDFProcessor:
         
         if results['meta']:
             df_meta = pd.DataFrame(results['meta'])
+            if 'data' in df_meta.columns:
+                df_meta.drop(columns='data', inplace=True)  # Remove 'data' column if exists
             meta_tsv = f"{base_path}_meta.tsv"
             df_meta.to_csv(meta_tsv, sep='\t', index=False, float_format='%.6f')
 
