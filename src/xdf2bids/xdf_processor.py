@@ -52,6 +52,8 @@ except (ImportError, ModuleNotFoundError) as e:
     sys.modules['pyxdf'] = DummyPyXDF()
     pyxdf = DummyPyXDF()
 
+from xdf2bids.utils import parse_event_string
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG) # console output
 logger.addHandler(logging.StreamHandler())
@@ -64,7 +66,10 @@ WII_BOARD_LENGTH = 23.8  # cm
 TRIAL_END_PATTERN = 'TRIAL_END'
 TRIAL_META_PATTERNS = ['trial_type', 'trial_name']
 
+META_TABLE_ORDER =["onset", "duration", "trial_type", "trial_name", "has_perturbations", "has_movement"]
+EVENT_TABLE_ORDER = ["onset", "duration", "label"]
 
+DUPLICATE_ONSET_DECIMALS = 3
 class XDFProcessor:
     """Simplified XDF processor focused on loading and BIDS export"""
 
@@ -188,13 +193,28 @@ class XDFProcessor:
                 
                 for i, marker in enumerate(markers):
                     if len(marker) > 0 and marker[0]:
-                        self.events.append({
+                        event_dict = {
                             'onset': timestamps[i],
                             'duration': 0.0,
                             'event_type': str(marker[0]),
                             'source': stream_name
-                        })
+                        }
+                        # Parse event string if needed
+                        event_dict.update(parse_event_string(event_dict['event_type']))
+                        self.events.append(event_dict)
         
+        events_df = pd.DataFrame(self.events)
+        events_df['onset_rounded'] = events_df['onset'].round(DUPLICATE_ONSET_DECIMALS)  # Round to avoid floating point issues
+        # Remove duplicates based on onset time
+        events_df.drop_duplicates(subset=['label', 'onset_rounded'], inplace=True)
+        events_df.drop(columns='onset_rounded', inplace=True)  # Clean up temporary column
+        # Change to desired Order:
+        # Specify the desired column order
+        desired_order = EVENT_TABLE_ORDER
+        # Add any missing columns at the end (optional, to avoid KeyError)
+        remaining = [col for col in events_df.columns if col not in desired_order]
+        # Reorder the DataFrame
+        self.events = events_df[desired_order + remaining].to_dict(orient='records')
         # Sort by onset time
         self.events.sort(key=lambda x: x['onset'])
         logger.info(f"Extracted {len(self.events)} events")
@@ -212,21 +232,29 @@ class XDFProcessor:
                 
                 for i, data in enumerate(meta_data):
                     if len(data) > 0:
-                        self.meta.append({
+                        meta_dict = {
                             'onset': timestamps[i],
-                            'data': data, 
+                            'data': data[0],  # Get the first element
                             'source': stream_name
-                        })
-        self.meta.sort(key=lambda x: x['onset'])
-        
-        ### Find Trial Information from meta events
+                        }
+                        # Parse event string if needed
+                        meta_dict.update(parse_event_string(meta_dict['data']))
+                        self.meta.append(meta_dict)
         # Remove duplicates based on onset time
         meta_df = pd.DataFrame(self.meta)
-        meta_df.drop_duplicates(subset='onset', inplace=True)
-        
-        # Filter for trial-related events
-        trial_events = meta_df[meta_df['data'].apply(lambda x: isinstance(x, str) and TRIAL_META_PATTERN in x)]
-        
+        meta_df['onset_rounded'] = meta_df['onset'].round(DUPLICATE_ONSET_DECIMALS)  # Round to avoid floating point issues
+        meta_df.drop_duplicates(subset=['data', 'onset_rounded'], inplace=True)
+        meta_df.drop(columns='onset_rounded', inplace=True)  # Clean up temporary column
+        # Change to desired Order:
+        # Add any missing columns at the end (optional, to avoid KeyError)
+        remaining = [col for col in meta_df.columns if col not in META_TABLE_ORDER]
+        final_order = META_TABLE_ORDER + remaining
+        # Reorder the DataFrame
+        meta_df = meta_df[final_order]
+        # Sort by onset time
+        self.meta = meta_df.to_dict(orient='records')
+        self.meta.sort(key=lambda x: x['onset'])
+
         logger.info(f"Extracted {len(self.meta)} meta events")
 
     def _extract_trials_from_events(self, from_meta_events: bool = False):
@@ -242,6 +270,7 @@ class XDFProcessor:
         if from_meta_events:
             logger.info("Extracting trials from meta events")
             for event in self.meta:
+                #TODO: Implement trial extraction from meta events
                 pass
         
         else:
@@ -310,7 +339,7 @@ class XDFProcessor:
         perturbation_ends.sort(key=lambda x: x['onset'])
 
         # Remove duplicates: if onset times are very close, keep only the first occurrence
-        def deduplicate_on_onset(events, atol=1e-6):
+        def deduplicate_on_onset(events, atol=1e-5):
             deduped = []
             for ev in events:
                 onset = ev['onset']
