@@ -482,54 +482,66 @@ class XDFProcessor:
             return min(start_times), max(end_times)
 
     def process_data(self, save_output: bool = True, output_dir: str = None) -> Dict[str, Any]:
-        """Main processing pipeline"""
+        """Main processing pipeline. Stores processed data as DataFrames."""
         if self.streams is None:
             raise ValueError("No XDF data loaded. Call load_xdf() first.")
-        
+
         # Extract events
         self._extract_events()
         self._extract_meta()
-        #self._extract_trials_from_events()
         self._extract_perturbations_from_events()
-        
+
         # Find overlap window
         start_time, end_time = self._find_overlap_window()
-        
-        # Store global time offset for external access
         self.global_t0 = start_time
-        
-        # Process each data stream in the overlap window
+
         processed_data = {}
         stream_metadata = {}
-        
+
         for stream in self.data_streams:
             stream_name = stream['info'].get('name', ['Unknown'])[0]
             stream_type = self._classify_stream(stream)
-            
+
             # Extract data in time window
             timestamps = stream['time_stamps']
             data = stream['time_series']
-            
-            # Filter to overlap window
             mask = (timestamps >= start_time) & (timestamps <= end_time)
             windowed_timestamps = timestamps[mask]
             windowed_data = data[mask]
-            
             if len(windowed_data) == 0:
                 continue
-            
+
             # Process based on stream type
-            #if stream_type == 'wii' and self.use_wii:
+            if stream_type == 'wii' and self.use_wii:
                 processed_stream_data = self._calculate_wii_cop(windowed_data)
-            #else:
-            processed_stream_data = {
-                'time': windowed_timestamps,
-                'raw_data': windowed_data}
-            
-            # Store processed data
-            processed_data[stream_type] = processed_stream_data
-            #processed_data['timestamps'] = windowed_timestamps
-            
+                df_data = {'time': windowed_timestamps}
+                for key, arr in processed_stream_data.items():
+                    if isinstance(arr, np.ndarray) and arr.shape[0] == windowed_timestamps.shape[0]:
+                        df_data[key] = arr
+                # Also add original force channels with labels
+                if 'raw_data' in processed_stream_data and isinstance(processed_stream_data['raw_data'], np.ndarray):
+                    raw = processed_stream_data['raw_data']
+                    channel_labels = self._get_channel_labels(stream)
+                    for ch in range(raw.shape[1]):
+                        col_name = channel_labels[ch] if ch < len(channel_labels) else f'channel_{ch+1}'
+                        df_data[col_name] = raw[:, ch]
+                df = pd.DataFrame(df_data)
+            else:
+                # For all other streams, just store time and raw data with channel labels
+                channel_labels = self._get_channel_labels(stream)
+                df_data = {'time': windowed_timestamps}
+                if windowed_data.ndim == 1:
+                    # Single channel
+                    col_name = channel_labels[0] if channel_labels else 'channel_1'
+                    df_data[col_name] = windowed_data
+                else:
+                    for ch in range(windowed_data.shape[1]):
+                        col_name = channel_labels[ch] if ch < len(channel_labels) else f'channel_{ch+1}'
+                        df_data[col_name] = windowed_data[:, ch]
+                df = pd.DataFrame(df_data)
+
+            processed_data[stream_type] = df
+
             # Store metadata
             channel_labels = self._get_channel_labels(stream)
             stream_metadata[stream_type] = {
@@ -539,17 +551,16 @@ class XDFProcessor:
                 'channel_labels': channel_labels,
                 'samples': len(windowed_data)
             }
-        
-        # Compile results
+
         results = {
             'data': processed_data,
             'metadata': stream_metadata,
-            'events': self.events,  # All raw events
-            'meta': self.meta,  # All raw meta events
-            'trials': getattr(self, 'trials', []),  # Clean trial table
-            'perturbations': getattr(self, 'perturbations', []),  # Clean perturbation events
+            'events': self.events,
+            'meta': self.meta,
+            'trials': getattr(self, 'trials', []),
+            'perturbations': getattr(self, 'perturbations', []),
             'time_window': (start_time, end_time),
-            'global_t0': self.global_t0,  # Global time offset for external use
+            'global_t0': self.global_t0,
             'processing_info': {
                 'data_streams_processed': len(processed_data),
                 'events_found': len(self.events),
@@ -557,7 +568,6 @@ class XDFProcessor:
                 'duration': end_time - start_time
             }
         }
-        
         logger.info(f"Processed {len(processed_data)} data streams with {len(self.events)} events")
         return results
 
@@ -622,80 +632,42 @@ class XDFProcessor:
         return relative_results
 
     def export_to_bids(self, results: Dict[str, Any], output_path: str):
-        """Export processed data to BIDS format"""
+        """Export processed data to BIDS format. Assumes data is already stored as DataFrames."""
         base_path = os.path.splitext(output_path)[0]
         global_t0 = results['time_window'][0]
-        use_relative_time = results.get('use_relative_time', True)  # Default to relative time
-        
-        # Export data streams
-        for stream_type in results['data']:
-                
-            if stream_type in results['data']:
-                raw_data = results['data'][stream_type]['raw_data']
-                timestamps = results['data'][stream_type]['time']
-                metadata = results['metadata'].get(stream_type, {})
-                
-                # Timestamps are already processed according to use_relative_time flag
-                time_column = timestamps
-                if use_relative_time:
-                    time_description = "Time relative to recording start"
-                    start_time = float(time_column[0])
-                else:
-                    time_description = "Absolute LSL timestamps"
-                    start_time = float(timestamps[0])
-                
-                # Check if timestamps are monotonically increasing
-                if not np.all(np.diff(time_column) >= 0):
-                    logger.warning(f"Timestamps for {stream_type} are not monotonically increasing. Adjusting...")
-                    time_column = np.sort(time_column)
-                    timestamps = np.sort(timestamps)
-                else:
-                    logger.debug(f"Timestamps for {stream_type} are monotonically increasing.")
-                
-                # Prepare DataFrame
-                df_data = {'time': time_column}
-                
+        use_relative_time = results.get('use_relative_time', True)
 
-                # Standard data handling
-            
-                if isinstance(raw_data, np.ndarray) and len(raw_data.shape) > 1:
-                    channel_labels = metadata.get('channel_labels', [])
-                    for ch in range(raw_data.shape[1]):
-                        if ch < len(channel_labels):
-                            col_name = channel_labels[ch].replace(' ', '_')
-                        else:
-                            col_name = f'channel_{ch+1}'
-                        
-                        df_data[col_name] = raw_data[:, ch]
-                
-                df = pd.DataFrame(df_data)
-                
-                # Save TSV file
-                tsv_path = f"{base_path}_{stream_type}.tsv"
-                df.to_csv(tsv_path, sep='\t', index=False, float_format='%.6f')
-                
-                # Save JSON sidecar
-                json_path = f"{base_path}_{stream_type}.json"
-                sidecar = {
-                    "SamplingFrequency": metadata.get('nominal_srate', 'n/a'),
-                    "StartTime": start_time,
-                    "Columns": list(df.columns),
-                    "StreamType": stream_type,
-                    "StreamName": metadata.get('name', 'Unknown'),
-                    "ChannelCount": metadata.get('channel_count', len(df.columns) - 1),
-                    "Description": f"Data from {stream_type} stream",
-                    "TimingInfo": {
-                        "use_relative_time": use_relative_time,
-                        "time_description": time_description,
-                        "global_t0": float(global_t0),
-                        "time_window": results['time_window']
-                    }
+        # Export data streams (now as DataFrames)
+        for stream_type, df in results['data'].items():
+            metadata = results['metadata'].get(stream_type, {})
+            if df.empty:
+                continue
+            # Save TSV file
+            tsv_path = f"{base_path}_{stream_type}.tsv"
+            df.to_csv(tsv_path, sep='\t', index=False, float_format='%.6f')
+
+            # Save JSON sidecar
+            time_description = "Time relative to recording start" if use_relative_time else "Absolute LSL timestamps"
+            start_time = float(df['time'].iloc[0])
+            json_path = f"{base_path}_{stream_type}.json"
+            sidecar = {
+                "SamplingFrequency": metadata.get('nominal_srate', 'n/a'),
+                "StartTime": start_time,
+                "Columns": list(df.columns),
+                "StreamType": stream_type,
+                "StreamName": metadata.get('name', 'Unknown'),
+                "ChannelCount": metadata.get('channel_count', len(df.columns) - 1),
+                "Description": f"Data from {stream_type} stream",
+                "TimingInfo": {
+                    "use_relative_time": use_relative_time,
+                    "time_description": time_description,
+                    "global_t0": float(global_t0),
+                    "time_window": results['time_window']
                 }
-                
-                with open(json_path, 'w') as f:
-                    json.dump(sidecar, f, indent=2)
-                
-                logger.info(f"Exported {stream_type}: {len(df)} samples ({'relative' if use_relative_time else 'absolute'} time)")
+            }
+            with open(json_path, 'w') as f:
+                json.dump(sidecar, f, indent=2)
+            logger.info(f"Exported {stream_type}: {len(df)} samples ({'relative' if use_relative_time else 'absolute'} time)")
         
         # Export events
         if results['events']:
