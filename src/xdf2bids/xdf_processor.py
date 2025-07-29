@@ -489,7 +489,7 @@ class XDFProcessor:
         # Extract events
         self._extract_events()
         self._extract_meta()
-        self._extract_trials_from_events()
+        #self._extract_trials_from_events()
         self._extract_perturbations_from_events()
         
         # Find overlap window
@@ -519,14 +519,16 @@ class XDFProcessor:
                 continue
             
             # Process based on stream type
-            if stream_type == 'wii' and self.use_wii:
+            #if stream_type == 'wii' and self.use_wii:
                 processed_stream_data = self._calculate_wii_cop(windowed_data)
-            else:
-                processed_stream_data = {'raw_data': windowed_data}
+            #else:
+            processed_stream_data = {
+                'time': windowed_timestamps,
+                'raw_data': windowed_data}
             
             # Store processed data
             processed_data[stream_type] = processed_stream_data
-            processed_data[f'{stream_type}_timestamps'] = windowed_timestamps
+            #processed_data['timestamps'] = windowed_timestamps
             
             # Store metadata
             channel_labels = self._get_channel_labels(stream)
@@ -592,11 +594,12 @@ class XDFProcessor:
         global_t0 = results['time_window'][0]
         
         # Convert stream timestamps to relative time
-        for stream_type in relative_results['data']:
-            if stream_type.endswith('_timestamps'):
-                timestamps = relative_results['data'][stream_type]
-                relative_results['data'][stream_type] = timestamps - global_t0
-        
+        data = relative_results['data']
+        streams = list(data.keys())
+        for stream_type in streams:
+            timestamps = data[stream_type]['time']
+            data[stream_type]['time'] = timestamps - global_t0
+
         # Convert event timestamps to relative time
         for event in relative_results['events']:
             event['onset'] = event['onset'] - global_t0
@@ -626,12 +629,10 @@ class XDFProcessor:
         
         # Export data streams
         for stream_type in results['data']:
-            if stream_type.endswith('_timestamps'):
-                continue
                 
-            if stream_type in results['data'] and f'{stream_type}_timestamps' in results['data']:
-                stream_data = results['data'][stream_type]
-                timestamps = results['data'][f'{stream_type}_timestamps']
+            if stream_type in results['data']:
+                raw_data = results['data'][stream_type]['raw_data']
+                timestamps = results['data'][stream_type]['time']
                 metadata = results['metadata'].get(stream_type, {})
                 
                 # Timestamps are already processed according to use_relative_time flag
@@ -654,29 +655,18 @@ class XDFProcessor:
                 # Prepare DataFrame
                 df_data = {'time': time_column}
                 
-                if stream_type == 'wii' and 'COP_x' in stream_data:
-                    # Special handling for Wii data
-                    df_data.update({
-                        'COP_x': stream_data['COP_x'],
-                        'COP_y': stream_data['COP_y'],
-                        'force_total': stream_data['force_total'],
-                        'force_TR': stream_data['force_TR'],
-                        'force_TL': stream_data['force_TL'],
-                        'force_BR': stream_data['force_BR'],
-                        'force_BL': stream_data['force_BL']
-                    })
-                else:
-                    # Standard data handling
-                    raw_data = stream_data.get('raw_data', stream_data)
-                    if isinstance(raw_data, np.ndarray) and len(raw_data.shape) > 1:
-                        channel_labels = metadata.get('channel_labels', [])
-                        for ch in range(raw_data.shape[1]):
-                            if ch < len(channel_labels):
-                                col_name = channel_labels[ch].replace(' ', '_')
-                            else:
-                                col_name = f'channel_{ch+1}'
-                            
-                            df_data[col_name] = raw_data[:, ch]
+
+                # Standard data handling
+            
+                if isinstance(raw_data, np.ndarray) and len(raw_data.shape) > 1:
+                    channel_labels = metadata.get('channel_labels', [])
+                    for ch in range(raw_data.shape[1]):
+                        if ch < len(channel_labels):
+                            col_name = channel_labels[ch].replace(' ', '_')
+                        else:
+                            col_name = f'channel_{ch+1}'
+                        
+                        df_data[col_name] = raw_data[:, ch]
                 
                 df = pd.DataFrame(df_data)
                 

@@ -204,3 +204,7 @@ __marimo__/
 
 # Macos
 .DS_Store
+
+# Example data
+example_data/*.tsv
+example_data/*.json
