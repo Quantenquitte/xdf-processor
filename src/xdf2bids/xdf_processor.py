@@ -62,6 +62,7 @@ logger.addHandler(logging.StreamHandler())
 SAVE_FOLDER = 'data/preprocessed'
 WII_BOARD_WIDTH = 43.3  # cm
 WII_BOARD_LENGTH = 23.8  # cm
+WII_CHANNELS = {"tl": "Weight_TopLeft", "tr": "Weight_TopRight", "bl": "Weight_BottomLeft", "br": "Weight_BottomRight"}
 
 TRIAL_END_PATTERN = 'TRIAL_END'
 TRIAL_META_PATTERNS = ['trial_type', 'trial_name']
@@ -73,28 +74,52 @@ DUPLICATE_ONSET_DECIMALS = 3
 class XDFProcessor:
     """Simplified XDF processor focused on loading and BIDS export"""
 
-    def __init__(self, use_wii=True, **kwargs):
+    def __init__(self, **kwargs):
         """Initialize with basic configuration."""
-        self.use_wii = use_wii
-        
-        # Device-specific Parameters
-        self.WII_BOARD_DIMENSIONS = kwargs.get('WII_BOARD_DIMENSIONS', (WII_BOARD_WIDTH, WII_BOARD_LENGTH)) # Wii Balance Board dimensions in cm
-    
+
         # Basic stream identification patterns
         self.stream_patterns = {
-            'wii': ['wiiuse', 'wii'],
-            'kinect': ['kinect', 'mocap'],
-            'eye_tracker': ['pupil', 'eye'],
-            'stimulus': ['vr_bodysway', 'stimulus', 'stim'],
-            'marker': ['marker', 'event', 'trigger'],
-            'meta': ['meta', 'info', 'metadata'],
+            'wii': 
+                {'name': ['wii'], 
+                 'type': ['mocap'], 
+                 'matching':'pattern'},
+                
+            'kinect': 
+                {'name': ['kinect'], 
+                 'type': ['mocap'], 
+                 'matching':'pattern'},
+                
+            'eye_tracker': 
+                {'name': ['pupil_capture'], 
+                 'type': ['gaze'], 
+                 'matching':'exact'},
+                
+            'eye_tracker_fixations': 
+                {'name': ['pupil_capture'], 
+                 'type': ['fixation'], 
+                 'matching':'pattern'},
+                
+            'stimulus': 
+                {'name': ['vr_bodysway', 'stimulus', 'stim'], 
+                 'type': ['timeseries'], 
+                 'matching':'pattern'},
+                
+            'marker': 
+                {'name': ['marker', 'event', 'trigger'], 
+                 'type': ['marker'], 
+                 'matching':'pattern'},
+                
+            'meta': 
+                {'name': ['meta', 'info', 'metadata'], 
+                 'type': ['marker', 'meta'], 
+                 'matching':'pattern'},
         }
         if 'stream_patterns' in kwargs:
             self.stream_patterns.update(kwargs['stream_patterns'])
 
         # Ensure patterns are lowercase for consistency
-        self.stream_patterns = {k: [p.lower() for p in v] for k, v in self.stream_patterns.items()}
-            
+        self.stream_patterns = {k: {**v, 'name': [p.lower() for p in v['name']]} for k, v in self.stream_patterns.items()}
+
         # Data storage
         self.streams = None
         self.header = None
@@ -155,30 +180,35 @@ class XDFProcessor:
         stream_name = stream['info'].get('name', [''])[0].lower()
         
         # Check by type or name patterns
-        if any(indicator in stream_type for indicator in self.stream_patterns['marker']):
+        if any(indicator in stream_type for indicator in self.stream_patterns['marker']['type']) and \
+            any(indicator in stream_name for indicator in self.stream_patterns['marker']['name']):
             return True
-        if any(indicator in stream_name for indicator in self.stream_patterns['marker']):
-            return True
-        
-        return False
+        else:
+            return False
 
     def _is_meta_stream(self, stream: Dict[str, Any]) -> bool:
         """Check if stream is a metadata stream"""
         stream_type = stream['info'].get('type', [''])[0].lower()
         stream_name = stream['info'].get('name', [''])[0].lower()
-        
-        return any(indicator in stream_type for indicator in self.stream_patterns['meta']) or \
-               any(indicator in stream_name for indicator in self.stream_patterns['meta'])
-    
+
+        return any(indicator in stream_type for indicator in self.stream_patterns['meta']['type']) and \
+               any(indicator in stream_name for indicator in self.stream_patterns['meta']['name'])
+
     def _classify_stream(self, stream: Dict[str, Any]) -> str:
-        """Classify stream type based on name patterns"""
+        """Classify stream type based on name/type patterns"""
         stream_name = stream['info'].get('name', [''])[0].lower()
-        
+        stream_type_str = stream['info'].get('type', [''])[0].lower()
+
         for stream_type, patterns in self.stream_patterns.items():
-            if any(pattern in stream_name for pattern in patterns):
-                return stream_type
-        
-        return 'data'  # Default classification
+            if patterns['matching'] == 'exact':
+                if any(pattern == stream_name for pattern in patterns['name']) and any(pattern == stream_type_str for pattern in patterns['type']):
+                    return stream_type
+            elif patterns['matching'] == 'pattern':
+                if any(pattern in stream_name for pattern in patterns['name']) and any(pattern in stream_type_str for pattern in patterns['type']):
+                    return stream_type
+        else:
+            logger.warning(f"Stream '{stream_name}' does not match any known patterns, classifying as 'data'")
+            return 'data'  # Default classification
 
     def _extract_events(self):
         """Extract events from marker streams"""
@@ -421,38 +451,7 @@ class XDFProcessor:
             ch_count = int(stream['info'].get('channel_count', ['1'])[0])
             return [f"Channel_{i+1}" for i in range(ch_count)]
 
-    def _calculate_wii_cop(self, force_data: np.ndarray) -> Dict[str, np.ndarray]:
-        """Simple COP calculation for Wii Balance Board"""
-        if force_data.shape[1] < 4:
-            return {'raw_data': force_data}
-        
-        # Force sensors: [TR, TL, BR, BL]
-        TR, TL, BR, BL = force_data[:, 0], force_data[:, 1], force_data[:, 2], force_data[:, 3]
-        total_force = TR + TL + BR + BL
-        
-        # Board dimensions in cm
-        X, Y = self.WII_BOARD_DIMENSIONS
-        
-        # Calculate COP (avoid division by zero)
-        COPx = np.zeros_like(total_force)
-        COPy = np.zeros_like(total_force)
-        
-        valid_force = total_force > 0
-        if np.any(valid_force):
-            COPx[valid_force] = (X/2) * ((TR[valid_force] + BR[valid_force]) - 
-                                        (TL[valid_force] + BL[valid_force])) / total_force[valid_force]
-            COPy[valid_force] = (Y/2) * ((TR[valid_force] + TL[valid_force]) - 
-                                        (BR[valid_force] + BL[valid_force])) / total_force[valid_force]
-        
-        return {
-            'COP_x': COPx,
-            'COP_y': COPy,
-            'force_total': total_force,
-            'force_TR': TR,
-            'force_TL': TL,
-            'force_BR': BR,
-            'force_BL': BL
-        }
+         
 
     def _find_overlap_window(self) -> Tuple[float, float]:
         """Find time window where all data streams overlap"""
@@ -509,6 +508,7 @@ class XDFProcessor:
             # Extract data in time window
             timestamps = stream['time_stamps']
             data = stream['time_series']
+            channel_labels = self._get_channel_labels(stream)
             
             # Filter to overlap window
             mask = (timestamps >= start_time) & (timestamps <= end_time)
@@ -519,21 +519,19 @@ class XDFProcessor:
                 continue
             
             # Process based on stream type
-            if stream_type == 'wii' and self.use_wii:
-                processed_stream_data = self._calculate_wii_cop(windowed_data)
-            else:
-                processed_stream_data = {'raw_data': windowed_data}
+            processed_stream_data = {'raw_data': windowed_data}
             
             # Store processed data
             processed_data[stream_type] = processed_stream_data
             processed_data[f'{stream_type}_timestamps'] = windowed_timestamps
             
             # Store metadata
-            channel_labels = self._get_channel_labels(stream)
             stream_metadata[stream_type] = {
                 'name': stream_name,
                 'channel_count': int(stream['info'].get('channel_count', ['0'])[0]),
                 'nominal_srate': float(stream['info'].get('nominal_srate', ['0'])[0]),
+                'effective_srate': float(stream['info'].get('effective_srate', ['0'])),
+                'type': stream['info'].get('type', [''])[0],
                 'channel_labels': channel_labels,
                 'samples': len(windowed_data)
             }
@@ -653,30 +651,18 @@ class XDFProcessor:
                 
                 # Prepare DataFrame
                 df_data = {'time': time_column}
-                
-                if stream_type == 'wii' and 'COP_x' in stream_data:
-                    # Special handling for Wii data
-                    df_data.update({
-                        'COP_x': stream_data['COP_x'],
-                        'COP_y': stream_data['COP_y'],
-                        'force_total': stream_data['force_total'],
-                        'force_TR': stream_data['force_TR'],
-                        'force_TL': stream_data['force_TL'],
-                        'force_BR': stream_data['force_BR'],
-                        'force_BL': stream_data['force_BL']
-                    })
-                else:
-                    # Standard data handling
-                    raw_data = stream_data.get('raw_data', stream_data)
-                    if isinstance(raw_data, np.ndarray) and len(raw_data.shape) > 1:
-                        channel_labels = metadata.get('channel_labels', [])
-                        for ch in range(raw_data.shape[1]):
-                            if ch < len(channel_labels):
-                                col_name = channel_labels[ch].replace(' ', '_')
-                            else:
-                                col_name = f'channel_{ch+1}'
-                            
-                            df_data[col_name] = raw_data[:, ch]
+
+                # Standard data handling
+                raw_data = stream_data.get('raw_data', stream_data)
+                if isinstance(raw_data, np.ndarray) and len(raw_data.shape) > 1:
+                    channel_labels = metadata.get('channel_labels', [])
+                    for ch in range(raw_data.shape[1]):
+                        if ch < len(channel_labels):
+                            col_name = channel_labels[ch].replace(' ', '_')
+                        else:
+                            col_name = f'channel_{ch+1}'
+                        
+                        df_data[col_name] = raw_data[:, ch]
                 
                 df = pd.DataFrame(df_data)
                 
