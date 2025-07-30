@@ -633,26 +633,25 @@ class XDFProcessor:
                 metadata = results['metadata'].get(stream_type, {})
                 
                 # Timestamps are already processed according to use_relative_time flag
-                time_column = timestamps
                 if use_relative_time:
                     time_description = "Time relative to recording start"
-                    start_time = float(time_column[0])
+                    start_time = float(timestamps[0])
                 else:
                     time_description = "Absolute LSL timestamps"
                     start_time = float(timestamps[0])
                 
                 # Check if timestamps are monotonically increasing
-                if not np.all(np.diff(time_column) >= 0):
+                if not np.all(np.diff(timestamps) >= 0):
                     logger.warning(f"Timestamps for {stream_type} are not monotonically increasing. Adjusting...")
-                    time_column = np.sort(time_column)
-                    timestamps = np.sort(timestamps)
+                    logger.info(f"There is a risk of misalignment in the data due to non-monotonic timestamps.")
+                    logger.info(f"There is a jump in {len(np.where(np.diff(timestamps) < 0)[0 ])} places.")
                 else:
                     logger.debug(f"Timestamps for {stream_type} are monotonically increasing.")
                 
                 # Prepare DataFrame
-                df_data = {'time': time_column}
+                df_data = {'time': timestamps}
 
-                # Standard data handling
+                # Standard data handling    
                 raw_data = stream_data.get('raw_data', stream_data)
                 if isinstance(raw_data, np.ndarray) and len(raw_data.shape) > 1:
                     channel_labels = metadata.get('channel_labels', [])
