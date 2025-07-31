@@ -59,7 +59,7 @@ logger.setLevel(logging.DEBUG) # console output
 logger.addHandler(logging.StreamHandler())
 
 
-SAVE_FOLDER = 'data/preprocessed'
+SAVE_FOLDER = 'data/preprocessed/debug'
 WII_BOARD_WIDTH = 43.3  # cm
 WII_BOARD_LENGTH = 23.8  # cm
 WII_CHANNELS = {"tl": "Weight_TopLeft", "tr": "Weight_TopRight", "bl": "Weight_BottomLeft", "br": "Weight_BottomRight"}
@@ -67,7 +67,7 @@ WII_CHANNELS = {"tl": "Weight_TopLeft", "tr": "Weight_TopRight", "bl": "Weight_B
 TRIAL_END_PATTERN = 'TRIAL_END'
 TRIAL_META_PATTERNS = ['trial_type', 'trial_name']
 
-META_TABLE_ORDER =["onset", "duration", "trial_type", "trial_name", "has_perturbations", "has_movement"]
+META_TABLE_ORDER =["onset", "duration", "trial_name", "trial_type", "has_perturbations", "has_movement"]
 EVENT_TABLE_ORDER = ["onset", "duration", "label"]
 
 DUPLICATE_ONSET_DECIMALS = 3
@@ -110,7 +110,7 @@ class XDFProcessor:
                  'matching':'pattern'},
                 
             'meta': 
-                {'name': ['meta', 'info', 'metadata'], 
+                {'name': ['trial_meta'], 
                  'type': ['marker', 'meta'], 
                  'matching':'pattern'},
         }
@@ -213,14 +213,11 @@ class XDFProcessor:
     def _extract_events(self):
         """Extract events from marker streams"""
         self.events = []
-        
         for stream_idx, stream in enumerate(self.marker_streams):
             stream_name = stream['info'].get('name', [f'Stream_{stream_idx}'])[0]
-            
             if 'time_stamps' in stream and 'time_series' in stream:
                 timestamps = stream['time_stamps']
                 markers = stream['time_series']
-                
                 for i, marker in enumerate(markers):
                     if len(marker) > 0 and marker[0]:
                         event_dict = {
@@ -229,61 +226,69 @@ class XDFProcessor:
                             'event_type': str(marker[0]),
                             'source': stream_name
                         }
-                        # Parse event string if needed
                         event_dict.update(parse_event_string(event_dict['event_type']))
                         self.events.append(event_dict)
-        
-        events_df = pd.DataFrame(self.events)
-        events_df['onset_rounded'] = events_df['onset'].round(DUPLICATE_ONSET_DECIMALS)  # Round to avoid floating point issues
-        # Remove duplicates based on onset time
-        events_df.drop_duplicates(subset=['label', 'onset_rounded'], inplace=True)
-        events_df.drop(columns='onset_rounded', inplace=True)  # Clean up temporary column
-        # Change to desired Order:
-        # Specify the desired column order
-        desired_order = EVENT_TABLE_ORDER
-        # Add any missing columns at the end (optional, to avoid KeyError)
-        remaining = [col for col in events_df.columns if col not in desired_order]
-        # Reorder the DataFrame
-        self.events = events_df[desired_order + remaining].to_dict(orient='records')
-        # Sort by onset time
-        self.events.sort(key=lambda x: x['onset'])
+        # Deduplicate and sort using DataFrame, then convert back to dicts
+        if self.events:
+            events_df = pd.DataFrame(self.events)
+            events_df['onset_rounded'] = events_df['onset'].round(DUPLICATE_ONSET_DECIMALS)
+            events_df.drop_duplicates(subset=['label', 'onset_rounded'], inplace=True)
+            events_df.drop(columns='onset_rounded', inplace=True)
+            desired_order = EVENT_TABLE_ORDER
+            remaining = [col for col in events_df.columns if col not in desired_order]
+            events_df = events_df[desired_order + remaining]
+            events_df.sort_values(by='onset', inplace=True)
+            self.events = events_df.to_dict(orient='records')
         logger.info(f"Extracted {len(self.events)} events")
 
     def _extract_meta(self):
         """Extract metadata from meta streams"""
-        self.meta = []
-        
+
+        meta_records = []
         for idx, stream in enumerate(self.meta_streams):
             stream_name = stream['info'].get('name', [f'MetaStream_{idx}'])[0]
-            
             if 'time_stamps' in stream and 'time_series' in stream:
                 timestamps = stream['time_stamps']
                 meta_data = stream['time_series']
-                
                 for i, data in enumerate(meta_data):
                     if len(data) > 0:
-                        meta_dict = {
-                            'onset': timestamps[i],
-                            'data': data[0],  # Get the first element
-                            'source': stream_name
-                        }
-                        # Parse event string if needed
-                        meta_dict.update(parse_event_string(meta_dict['data']))
-                        self.meta.append(meta_dict)
-        # Remove duplicates based on onset time
-        meta_df = pd.DataFrame(self.meta)
-        meta_df['onset_rounded'] = meta_df['onset'].round(DUPLICATE_ONSET_DECIMALS)  # Round to avoid floating point issues
-        meta_df.drop_duplicates(subset=['data', 'onset_rounded'], inplace=True)
-        meta_df.drop(columns='onset_rounded', inplace=True)  # Clean up temporary column
-        # Change to desired Order:
-        # Add any missing columns at the end (optional, to avoid KeyError)
-        remaining = [col for col in meta_df.columns if col not in META_TABLE_ORDER]
-        final_order = META_TABLE_ORDER + remaining
-        # Reorder the DataFrame
+                        parsed = parse_event_string(data[0])
+                        parsed['onset'] = timestamps[i]
+                        parsed['source'] = stream_name
+                        meta_records.append(parsed)
+
+        if not meta_records:
+            logger.warning("No meta events found in the streams")
+            self.meta = []
+            return
+
+        meta_df = pd.DataFrame(meta_records)
+
+        # Remove duplicates based on onset time (rounded)
+        meta_df['onset_rounded'] = meta_df['onset'].round(DUPLICATE_ONSET_DECIMALS)
+        # Only deduplicate if 'onset_rounded' and at least one other column exist
+        dedup_cols = ['onset_rounded']
+        if 'trial_name' in meta_df.columns:
+            dedup_cols.append('trial_name')
+        elif 'data' in meta_df.columns:
+            dedup_cols.append('data')
+        meta_df.drop_duplicates(subset=dedup_cols, inplace=True)
+        meta_df.drop(columns='onset_rounded', inplace=True)
+
+        # Remove 'data' column if it exists (no longer needed after parsing)
+        if 'data' in meta_df.columns:
+            meta_df.drop(columns='data', inplace=True)
+
+        # Reorder columns: META_TABLE_ORDER first, then the rest
+        final_order = [col for col in META_TABLE_ORDER if col in meta_df.columns] + \
+                    [col for col in meta_df.columns if col not in META_TABLE_ORDER]
         meta_df = meta_df[final_order]
+
         # Sort by onset time
+        meta_df.sort_values(by='onset', inplace=True)
+
+        # Store as list of dicts for downstream compatibility
         self.meta = meta_df.to_dict(orient='records')
-        self.meta.sort(key=lambda x: x['onset'])
 
         logger.info(f"Extracted {len(self.meta)} meta events")
 
