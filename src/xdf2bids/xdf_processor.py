@@ -292,61 +292,22 @@ class XDFProcessor:
 
         logger.info(f"Extracted {len(self.meta)} meta events")
 
-    def _extract_trials_from_events(self, from_meta_events: bool = False):
+    def _extract_trials_from_events(self, event_type = "vr_trial_meta"):
         """Extract trial information and keep all events"""
         
         # Keep all events as-is for transparency
         # Just sort them by onset time
-        self.events.sort(key=lambda x: x['onset'])
-        logger.info(f"Kept {len(self.events)} raw events")
-        
-        # Extract clean trial information
-        self.trials = []
-        if from_meta_events:
-            logger.info("Extracting trials from meta events")
-            for event in self.meta:
-                #TODO: Implement trial extraction from meta events
-                pass
-        
-        else:
-            for event in self.events:
-                event_type = event['event_type']
-                onset = event['onset']
-                
-                # Extract trial info from TRIAL_END events with duration info
-                if 'TRIAL_END:' in event_type and ':duration=' in event_type:
-                    try:
-                        # Parse: "TRIAL_END:1:time=1252.1662882:duration=45.00090410000007"
-                        parts = event_type.split(':')
-                        trial_num = int(parts[1])
-                        duration = float(parts[3].replace('duration=', ''))
-                        
-                        # Calculate trial start time
-                        trial_start = onset - duration
-                        
-                        self.trials.append({
-                            'onset': trial_start,
-                            'duration': duration,
-                            'trial_type': f'trial_{trial_num}',
-                            'trial_number': trial_num
-                        })
-                        
-                    except (ValueError, IndexError):
-                        continue
-        
-        # Remove duplicate trials (can occur due to duplicate marker streams)
-        # Keep the last occurrence of each trial number
-        unique_trials = {}
-        for trial in self.trials:
-            trial_num = trial['trial_number']
-            if trial_num not in unique_trials or trial['onset'] > unique_trials[trial_num]['onset']:
-                unique_trials[trial_num] = trial
-        
-        self.trials = list(unique_trials.values())
-        
-        # Sort trials by onset
-        self.trials.sort(key=lambda x: x['onset'])
-        logger.info(f"Extracted {len(self.trials)} trials (removed duplicates)")
+        events = pd.DataFrame(self.events)
+        events = events.loc[events['event_type']==event_type]
+
+        # remove empty columns
+        nan_value = float("NaN")
+        events.replace("", nan_value, inplace=True)
+        events.dropna(how='all', axis=1, inplace=True)
+        events.sort_values(by='onset', inplace=True)
+        self.trials = events.to_dict(orient='records')
+
+
 
     def _extract_perturbations_from_events(self) -> List[Dict[str, Any]]:
         """Extract perturbation events from the event list"""
