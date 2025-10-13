@@ -85,8 +85,8 @@ class XDFProcessor:
                  'matching':'pattern'},
                 
             'kinect': 
-                {'name': ['kinect'], 
-                 'type': ['mocap'], 
+                {'name': ['kinect', "kinectv2"], 
+                 'type': ['mocap', 'position'], 
                  'matching':'pattern'},
                 
             'eye_tracker': 
