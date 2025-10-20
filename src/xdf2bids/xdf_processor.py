@@ -90,14 +90,19 @@ class XDFProcessor:
                  'matching':'pattern'},
                 
             'eye_tracker': 
-                {'name': ['pupil_capture'], 
+                {'name': ['neurolab_neon gaze'], 
                  'type': ['gaze'], 
-                 'matching':'exact'},
-                
-            'eye_tracker_fixations': 
-                {'name': ['pupil_capture'], 
-                 'type': ['fixation'], 
                  'matching':'pattern'},
+                
+            'eye_tracker_events': 
+                {'name': ['neurolab_neon events'], 
+                 'type': ['event'], 
+                 'matching':'pattern'},
+            
+            'online_cop':
+                {'name': ['cop'],
+                    'type': ['cop'],
+                    'matching':'pattern'},
                 
             'stimulus': 
                 {'name': ['vr_bodysway', 'stimulus', 'stim'], 
@@ -106,7 +111,7 @@ class XDFProcessor:
                 
             'marker': 
                 {'name': ['marker', 'event', 'trigger'], 
-                 'type': ['marker'], 
+                 'type': ['marker', 'event'], 
                  'matching':'pattern'},
                 
             'meta': 
@@ -172,7 +177,7 @@ class XDFProcessor:
             else:
                 self.data_streams.append(stream)
 
-        logger.info(f"Found {len(self.data_streams)} data streams, {len(self.marker_streams)} marker streams, {len(self.meta_streams)} meta streams")
+        logger.info(f"Found {len(self.data_streams)} data streams: {[self.data_streams[i]['info']['name'] for i in range(len(self.data_streams)) ]}, {len(self.marker_streams)} marker streams, {len(self.meta_streams)} meta streams")
 
     def _is_marker_stream(self, stream: Dict[str, Any]) -> bool:
         """Simple check if stream is a marker stream"""
@@ -292,7 +297,7 @@ class XDFProcessor:
 
         logger.info(f"Extracted {len(self.meta)} meta events")
 
-    def _extract_trials_from_events(self, event_type = "vr_trial_meta"):
+    def _extract_trials_from_events(self, event_type = "trial_meta"):
         """Extract trial information and keep all events"""
         
         # Keep all events as-is for transparency
