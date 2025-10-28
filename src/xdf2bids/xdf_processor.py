@@ -64,6 +64,7 @@ WII_BOARD_WIDTH = 43.3  # cm
 WII_BOARD_LENGTH = 23.8  # cm
 WII_CHANNELS = {"tl": "Weight_TopLeft", "tr": "Weight_TopRight", "bl": "Weight_BottomLeft", "br": "Weight_BottomRight"}
 
+START_FROM_TRIAL = 1
 TRIAL_END_PATTERN = 'TRIAL_END'
 TRIAL_META_PATTERNS = ['trial_type', 'trial_name']
 
@@ -71,6 +72,7 @@ META_TABLE_ORDER =["onset", "duration", "trial_name", "trial_type", "has_perturb
 EVENT_TABLE_ORDER = ["onset", "duration", "label"]
 
 DUPLICATE_ONSET_DECIMALS = 3
+
 class XDFProcessor:
     """Simplified XDF processor focused on loading and BIDS export"""
 
@@ -443,7 +445,11 @@ class XDFProcessor:
 
         overlap_start = max(start_times)  # Latest start
         overlap_end = min(end_times)      # Earliest end
-
+        # Find experiment start time from events
+        experiment_start = self.trials[START_FROM_TRIAL]['onset'] if hasattr(self, 'trials') and self.trials else None
+        if experiment_start is not None and experiment_start > overlap_start:
+            logger.info(f"Adjusting overlap start time to experiment start time (trial {START_FROM_TRIAL}): {experiment_start:.3f} seconds")
+            overlap_start = experiment_start
         if overlap_start <= overlap_end:
             logger.info(f"Overlap window: {overlap_start:.3f} to {overlap_end:.3f} seconds ({overlap_end-overlap_start:.3f}s duration)")
             return overlap_start, overlap_end
