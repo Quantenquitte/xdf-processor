@@ -329,7 +329,8 @@ class XDFProcessor:
                     corrected_duration = next_onset - current_onset
                     logger.warning(f"Correcting trial {i} duration from {current_duration} to {corrected_duration}")
                     events.at[events.index[i], 'duration'] = corrected_duration
-
+        else:
+            logger.warning("No 'duration' column found in trial events, skipping duration correction.")
         self.trials = events.to_dict(orient='records')
 
 
