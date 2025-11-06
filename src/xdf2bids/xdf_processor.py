@@ -307,6 +307,12 @@ class XDFProcessor:
         events = pd.DataFrame(self.events)
         events = events.loc[events['event_type']==event_type]
 
+        # Check if we have any events after filtering
+        if events.empty:
+            logger.warning(f"No events found with event_type '{event_type}'. Setting trials to empty list.")
+            self.trials = []
+            return
+
         # remove empty columns
         nan_value = float("NaN")
         events.replace("", nan_value, inplace=True)
@@ -457,7 +463,7 @@ class XDFProcessor:
             logger.warning("No overlap found, using full time range")
             return min(start_times), max(end_times)
 
-    def process_data(self, save_output: bool = True, output_dir: str = None) -> Dict[str, Any]:
+    def process_data(self, save_output: bool = True, output_dir: str = None, trial_event_type: str = "trial_meta") -> Dict[str, Any]:
         """Main processing pipeline"""
         if self.streams is None:
             raise ValueError("No XDF data loaded. Call load_xdf() first.")
@@ -465,7 +471,7 @@ class XDFProcessor:
         # Extract events
         self._extract_events()
         self._extract_meta()
-        self._extract_trials_from_events()
+        self._extract_trials_from_events(trial_event_type)
         self._extract_perturbations_from_events()
         
         # Find overlap window
@@ -788,13 +794,14 @@ class XDFProcessor:
         with open(global_json, 'w') as f:
             json.dump(global_metadata, f, indent=2)
 
-    def preprocess_xdf(self, xdf_file: str = None, output_dir: str = None, use_relative_time: bool = True) -> Dict[str, Any]:
+    def preprocess_xdf(self, xdf_file: str = None, output_dir: str = None, use_relative_time: bool = True, trial_event_type: str = "trial_meta") -> Dict[str, Any]:
         """Complete preprocessing pipeline
         
         Args:
             xdf_file: Path to XDF file to process
             output_dir: Directory to export BIDS files to
             use_relative_time: If True, timestamps start from 0. If False, use absolute LSL timestamps
+            trial_event_type: Event type to use for trial extraction (default: "trial_meta")
         """
         # Load data
         if xdf_file:
@@ -803,7 +810,7 @@ class XDFProcessor:
             xdf_file = self.load_xdf()
         
         # Process data (always preserves absolute timestamps)
-        results = self.process_data()
+        results = self.process_data(trial_event_type=trial_event_type)
         
         # Apply relative time conversion if requested
         if use_relative_time:
