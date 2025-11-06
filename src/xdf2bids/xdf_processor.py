@@ -328,7 +328,7 @@ class XDFProcessor:
                 if current_onset + current_duration > next_onset:
                     corrected_duration = next_onset - current_onset
                     logger.warning(f"Correcting trial {i} duration from {current_duration} to {corrected_duration}")
-                    events.at[events.index[i], 'duration'] = corrected_duration
+                    events.at[events.index[i], 'duration'] = corrected_duration nb
 
         self.trials = events.to_dict(orient='records')
 
