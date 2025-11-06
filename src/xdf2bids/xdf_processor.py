@@ -318,6 +318,18 @@ class XDFProcessor:
         events.replace("", nan_value, inplace=True)
         events.dropna(how='all', axis=1, inplace=True)
         events.sort_values(by='onset', inplace=True)
+
+        # Correct trial durations if needed (should not be longer than time to next trial)
+        if 'duration' in events.columns:
+            for i in range(len(events)-1):
+                current_onset = events.iloc[i]['onset']
+                next_onset = events.iloc[i+1]['onset']
+                current_duration = events.iloc[i]['duration']
+                if current_onset + current_duration > next_onset:
+                    corrected_duration = next_onset - current_onset
+                    logger.warning(f"Correcting trial {i} duration from {current_duration} to {corrected_duration}")
+                    events.at[events.index[i], 'duration'] = corrected_duration
+
         self.trials = events.to_dict(orient='records')
 
 
