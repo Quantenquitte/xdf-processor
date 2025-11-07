@@ -64,7 +64,7 @@ WII_BOARD_WIDTH = 43.3  # cm
 WII_BOARD_LENGTH = 23.8  # cm
 WII_CHANNELS = {"tl": "Weight_TopLeft", "tr": "Weight_TopRight", "bl": "Weight_BottomLeft", "br": "Weight_BottomRight"}
 
-START_FROM_TRIAL = 2
+START_FROM_TRIAL = 0
 TRIAL_END_PATTERN = 'TRIAL_END'
 TRIAL_META_PATTERNS = ['trial_type', 'trial_name']
 
@@ -72,7 +72,7 @@ META_TABLE_ORDER =["onset", "duration", "trial_name", "trial_type", "has_perturb
 EVENT_TABLE_ORDER = ["onset", "duration", "label"]
 
 DUPLICATE_ONSET_DECIMALS = 3
-
+IGNORE_FOR_OVERLAP = ['online_cop']
 class XDFProcessor:
     """Simplified XDF processor focused on loading and BIDS export"""
 
@@ -454,6 +454,8 @@ class XDFProcessor:
         end_times = []
         
         for stream in self.data_streams:
+            if stream['info'].get('name', [''])[0] in IGNORE_FOR_OVERLAP:
+                continue
             timestamps = stream['time_stamps']
             if len(timestamps) > 0:
                 start_times.append(timestamps[0])
