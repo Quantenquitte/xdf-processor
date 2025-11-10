@@ -175,7 +175,9 @@ class XDFProcessor:
             
             elif self._is_marker_stream(stream):
                 self.marker_streams.append(stream)
-                
+            # sort out empty streams
+            elif ('time_stamps' not in stream or len(stream['time_stamps']) == 0):
+                logger.warning(f"Stream '{stream['info'].get('name', ['Unnamed'])[0]}' is empty, skipping.")
             else:
                 self.data_streams.append(stream)
 
