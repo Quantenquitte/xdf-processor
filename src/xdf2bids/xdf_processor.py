@@ -329,8 +329,9 @@ class XDFProcessor:
                 current_duration = events.iloc[i]['duration']
                 if current_onset + current_duration > next_onset:
                     corrected_duration = next_onset - current_onset
-                    logger.warning(f"Correcting trial {i} duration from {current_duration} to {corrected_duration}")
                     events.at[events.index[i], 'duration'] = corrected_duration
+                    if np.abs(current_duration - corrected_duration) > 1e-1:
+                        logger.warning(f"Correcting trial {i} duration from {current_duration:.3f} to {corrected_duration:.3f} seconds to avoid overlap with next trial.")
         else:
             logger.warning("No 'duration' column found in trial events, skipping duration correction.")
         self.trials = events.to_dict(orient='records')
@@ -462,18 +463,29 @@ class XDFProcessor:
             if len(timestamps) > 0:
                 start_times.append(timestamps[0])
                 end_times.append(timestamps[-1])
+                logger.debug(f"Stream '{stream['info'].get('name', ['Unnamed'])[0]}' time range: {timestamps[0]:.3f} to {timestamps[-1]:.3f} seconds")
         
         if not start_times:
             return 0.0, 1.0
 
         overlap_start = max(start_times)  # Latest start
         overlap_end = min(end_times)      # Earliest end
+
+        # Log Events and Meta time ranges
+        first_event, last_event = (min([e['onset'] for e in self.events]), max([e['onset'] for e in self.events])) if self.events else (None, None)
+        first_trial, last_trial = (min([t['onset'] for t in self.trials]), max([t['onset'] + t['duration'] for t in self.trials])) if hasattr(self, 'trials') and self.trials else (None, None)
+        first_meta, last_meta = (min([m['onset'] for m in self.meta]), max([m['onset'] for m in self.meta])) if self.meta else (None, None)
+
+        logger.info(f"Events start {first_event- overlap_start} to end {last_event - overlap_start} seconds relative to overlap start") if first_event is not None else None
+        logger.info(f"Trials start {first_trial - overlap_start} to end {last_trial - overlap_start} seconds relative to overlap start") if first_trial is not None else None
+        logger.info(f"Meta start {first_meta - overlap_start} to end {last_meta - overlap_start} seconds relative to overlap start") if first_meta is not None else None
+
         # Find experiment start time from events
         experiment_start = float(self.trials[START_FROM_TRIAL]['onset']) if hasattr(self, 'trials') and self.trials else None
         if experiment_start is not None and experiment_start > overlap_start:
             logger.info(f"Adjusting overlap start time to experiment start time (trial {START_FROM_TRIAL}): {experiment_start:.3f} seconds")
             overlap_start = experiment_start
-        if overlap_start <= overlap_end:
+        elif overlap_start <= overlap_end:
             logger.info(f"Overlap window: {overlap_start:.3f} to {overlap_end:.3f} seconds ({overlap_end-overlap_start:.3f}s duration)")
             return overlap_start, overlap_end
         else:
@@ -496,6 +508,7 @@ class XDFProcessor:
         
         # Store global time offset for external access
         self.global_t0 = start_time
+        self.global_t1 = end_time
         
         # Process each data stream in the overlap window
         processed_data = {}
