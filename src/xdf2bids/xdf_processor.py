@@ -485,6 +485,7 @@ class XDFProcessor:
         if experiment_start is not None and experiment_start > overlap_start:
             logger.info(f"Adjusting overlap start time to experiment start time (trial {START_FROM_TRIAL}): {experiment_start:.3f} seconds")
             overlap_start = experiment_start
+            return overlap_start, overlap_end
         elif overlap_start <= overlap_end:
             logger.info(f"Overlap window: {overlap_start:.3f} to {overlap_end:.3f} seconds ({overlap_end-overlap_start:.3f}s duration)")
             return overlap_start, overlap_end
