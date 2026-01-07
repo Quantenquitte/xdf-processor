@@ -73,6 +73,8 @@ EVENT_TABLE_ORDER = ["onset", "duration", "label"]
 
 DUPLICATE_ONSET_DECIMALS = 3
 IGNORE_FOR_OVERLAP = ['online_cop']
+
+WARNING_THRESHOLD = 0.3  # seconds
 class XDFProcessor:
     """Simplified XDF processor focused on loading and BIDS export"""
 
@@ -329,7 +331,8 @@ class XDFProcessor:
                 current_duration = events.iloc[i]['duration']
                 if current_onset + current_duration > next_onset:
                     corrected_duration = next_onset - current_onset
-                    logger.warning(f"Correcting trial {i} duration from {current_duration} to {corrected_duration}")
+                    if np.abs(corrected_duration) > WARNING_THRESHOLD: 
+                        logger.warning(f"Correcting trial {i} duration from {current_duration} to {corrected_duration}")
                     events.at[events.index[i], 'duration'] = corrected_duration
         else:
             logger.warning("No 'duration' column found in trial events, skipping duration correction.")
