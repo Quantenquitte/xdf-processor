@@ -152,14 +152,14 @@ class XDFProcessor:
         if not os.path.exists(xdf_file):
             raise FileNotFoundError(f"XDF file not found: {xdf_file}")
         
-        logger.info(f"Loading XDF file: {xdf_file}")
+        logger.debug(f"Loading XDF file: {xdf_file}")
         
         try:
             self.streams, self.header = pyxdf.load_xdf(xdf_file)
         except ImportError as e:
             raise ImportError(f"Failed to load XDF file due to pyxdf import error: {e}")
         
-        logger.info(f"Loaded {len(self.streams)} streams")
+        logger.debug(f"Loaded {len(self.streams)} streams")
         
         self._organize_streams()
         return xdf_file
@@ -183,7 +183,7 @@ class XDFProcessor:
             else:
                 self.data_streams.append(stream)
 
-        logger.info(f"Found {len(self.data_streams)} data streams: {[self.data_streams[i]['info']['name'] for i in range(len(self.data_streams)) ]}, {len(self.marker_streams)} marker streams, {len(self.meta_streams)} meta streams")
+        logger.debug(f"Found {len(self.data_streams)} data streams: {[self.data_streams[i]['info']['name'] for i in range(len(self.data_streams)) ]}, {len(self.marker_streams)} marker streams, {len(self.meta_streams)} meta streams")
 
     def _is_marker_stream(self, stream: Dict[str, Any]) -> bool:
         """Simple check if stream is a marker stream"""
@@ -250,7 +250,7 @@ class XDFProcessor:
             events_df = events_df[desired_order + remaining]
             events_df.sort_values(by='onset', inplace=True)
             self.events = events_df.to_dict(orient='records')
-        logger.info(f"Extracted {len(self.events)} events")
+        logger.debug(f"Extracted {len(self.events)} events")
 
     def _extract_meta(self):
         """Extract metadata from meta streams"""
@@ -301,7 +301,7 @@ class XDFProcessor:
         # Store as list of dicts for downstream compatibility
         self.meta = meta_df.to_dict(orient='records')
 
-        logger.info(f"Extracted {len(self.meta)} meta events")
+        logger.debug(f"Extracted {len(self.meta)} meta events")
 
     def _extract_trials_from_events(self, event_type = "trial_meta"):
         """Extract trial information and keep all events"""
@@ -331,7 +331,7 @@ class XDFProcessor:
                 current_duration = events.iloc[i]['duration']
                 if current_onset + current_duration > next_onset:
                     corrected_duration = next_onset - current_onset
-                    if np.abs(corrected_duration) > WARNING_THRESHOLD: 
+                    if np.abs(corrected_duration - current_duration) > WARNING_THRESHOLD: 
                         logger.warning(f"Correcting trial {i} duration from {current_duration} to {corrected_duration}")
                     events.at[events.index[i], 'duration'] = corrected_duration
 
@@ -387,7 +387,7 @@ class XDFProcessor:
                 start['source'] = start['source']
 
             self.perturbations = perturbation_starts
-            logger.info(f"Extracted {len(self.perturbations)} perturbation events")
+            logger.debug(f"Extracted {len(self.perturbations)} perturbation events")
 
         except AssertionError as e:
             logger.warning(f"Mismatched perturbation start/end counts: {e}")
@@ -401,7 +401,7 @@ class XDFProcessor:
                 self.perturbations = perturbation_starts
             else:
                 logger.error(f"Unable to resolve perturbation events due to mismatched counts: {e}")
-                logger.info("Number of starts: {}, Number of ends: {}".format(
+                logger.debug("Number of starts: {}, Number of ends: {}".format(
                     len(perturbation_starts), len(perturbation_ends)))
                 self.perturbations = []
 
@@ -479,18 +479,18 @@ class XDFProcessor:
         first_trial, last_trial = (min([t['onset'] for t in self.trials]), max([t['onset'] + t['duration'] for t in self.trials])) if hasattr(self, 'trials') and self.trials else (None, None)
         first_meta, last_meta = (min([m['onset'] for m in self.meta]), max([m['onset'] for m in self.meta])) if self.meta else (None, None)
 
-        logger.info(f"Events start {first_event- overlap_start} to end {last_event - overlap_start} seconds relative to overlap start") if first_event is not None else None
-        logger.info(f"Trials start {first_trial - overlap_start} to end {last_trial - overlap_start} seconds relative to overlap start") if first_trial is not None else None
-        logger.info(f"Meta start {first_meta - overlap_start} to end {last_meta - overlap_start} seconds relative to overlap start") if first_meta is not None else None
+        logger.debug(f"Events start {first_event- overlap_start} to end {last_event - overlap_start} seconds relative to overlap start") if first_event is not None else None
+        logger.debug(f"Trials start {first_trial - overlap_start} to end {last_trial - overlap_start} seconds relative to overlap start") if first_trial is not None else None
+        logger.debug(f"Meta start {first_meta - overlap_start} to end {last_meta - overlap_start} seconds relative to overlap start") if first_meta is not None else None
 
         # Find experiment start time from events
         experiment_start = float(self.trials[START_FROM_TRIAL]['onset']) if hasattr(self, 'trials') and self.trials else None
         if experiment_start is not None and experiment_start > overlap_start:
-            logger.info(f"Adjusting overlap start time to experiment start time (trial {START_FROM_TRIAL}): {experiment_start:.3f} seconds")
+            logger.debug(f"Adjusting overlap start time to experiment start time (trial {START_FROM_TRIAL}): {experiment_start:.3f} seconds")
             overlap_start = experiment_start
             return overlap_start, overlap_end
         elif overlap_start <= overlap_end:
-            logger.info(f"Overlap window: {overlap_start:.3f} to {overlap_end:.3f} seconds ({overlap_end-overlap_start:.3f}s duration)")
+            logger.debug(f"Overlap window: {overlap_start:.3f} to {overlap_end:.3f} seconds ({overlap_end-overlap_start:.3f}s duration)")
             return overlap_start, overlap_end
         else:
             logger.warning("No overlap found, using full time range")
@@ -660,8 +660,8 @@ class XDFProcessor:
                 # Check if timestamps are monotonically increasing
                 if not np.all(np.diff(timestamps) >= 0):
                     logger.warning(f"Timestamps for {stream_type} are not monotonically increasing. Adjusting...")
-                    logger.info(f"There is a risk of misalignment in the data due to non-monotonic timestamps.")
-                    logger.info(f"There is a jump in {len(np.where(np.diff(timestamps) < 0)[0 ])} places.")
+                    logger.debug(f"There is a risk of misalignment in the data due to non-monotonic timestamps.")
+                    logger.debug(f"There is a jump in {len(np.where(np.diff(timestamps) < 0)[0 ])} places.")
                 else:
                     logger.debug(f"Timestamps for {stream_type} are monotonically increasing.")
                 
@@ -707,7 +707,7 @@ class XDFProcessor:
                 with open(json_path, 'w') as f:
                     json.dump(sidecar, f, indent=2)
                 
-                logger.info(f"Exported {stream_type}: {len(df)} samples ({'relative' if use_relative_time else 'absolute'} time)")
+                logger.debug(f"Exported {stream_type}: {len(df)} samples ({'relative' if use_relative_time else 'absolute'} time)")
         
         # Export events
         if results['events']:
@@ -742,7 +742,7 @@ class XDFProcessor:
             with open(events_json, 'w') as f:
                 json.dump(events_sidecar, f, indent=2)
             
-            logger.info(f"Exported {len(df_events)} events ({'relative' if use_relative_time else 'absolute'} time)")
+            logger.debug(f"Exported {len(df_events)} events ({'relative' if use_relative_time else 'absolute'} time)")
 
         # Export clean trials table
         if results['trials']:
@@ -772,7 +772,7 @@ class XDFProcessor:
             with open(trials_json, 'w') as f:
                 json.dump(trials_sidecar, f, indent=2)
             
-            logger.info(f"Exported {len(df_trials)} clean trials ({'relative' if use_relative_time else 'absolute'} time)")
+            logger.debug(f"Exported {len(df_trials)} clean trials ({'relative' if use_relative_time else 'absolute'} time)")
         # Export perturbations
         if results['perturbations']:
             df_perturbations = pd.DataFrame(results['perturbations'])
@@ -793,7 +793,7 @@ class XDFProcessor:
             with open(perturbations_json, 'w') as f:
                 json.dump(perturbations_sidecar, f, indent=2)
 
-            logger.info(f"Exported {len(df_perturbations)} perturbations ({'relative' if use_relative_time else 'absolute'} time)")
+            logger.debug(f"Exported {len(df_perturbations)} perturbations ({'relative' if use_relative_time else 'absolute'} time)")
         
         if results['meta']:
             df_meta = pd.DataFrame(results['meta'])
@@ -816,7 +816,7 @@ class XDFProcessor:
             with open(meta_json, 'w') as f:
                 json.dump(meta_sidecar, f, indent=2)
 
-            logger.info(f"Exported {len(df_meta)} metadata events ({'relative' if use_relative_time else 'absolute'} time)")
+            logger.debug(f"Exported {len(df_meta)} metadata events ({'relative' if use_relative_time else 'absolute'} time)")
         # Save global metadata
         global_metadata = {
             "global_t0": float(global_t0) if use_relative_time else None,
@@ -858,7 +858,7 @@ class XDFProcessor:
             filename_base = os.path.splitext(os.path.basename(xdf_file))[0]
             output_path = os.path.join(output_dir, filename_base)
             self.export_to_bids(results, output_path)
-            logger.info(f"Exported data to: {output_dir}")
+            logger.debug(f"Exported data to: {output_dir}")
         
         return results
 
