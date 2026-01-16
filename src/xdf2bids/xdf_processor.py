@@ -16,6 +16,7 @@
 """
 
 __version__ = "0.1.0"
+__all__ = ["XDFProcessor"]
 
 import logging
 import os
@@ -405,51 +406,104 @@ class XDFProcessor:
                     len(perturbation_starts), len(perturbation_ends)))
                 self.perturbations = []
 
-    def _get_channel_labels(self, stream: Dict[str, Any]) -> List[str]:
-        """Extract channel labels with simplified parsing"""
+    def _get_channel_labels(self, stream: Dict[str, Any]) -> Tuple[List[str], List[Dict[str, str]]]:
+        """Extract channel labels and all available metadata
+        
+        Returns:
+            Tuple of (channel_labels, channel_metadata)
+            where channel_metadata is a list of dicts containing all available channel info
+        """
         try:
             ch_count = int(stream['info'].get('channel_count', ['0'])[0])
             channel_labels = []
+            channel_metadata = []
             
             # Try to get from description
             if 'desc' in stream['info'] and stream['info']['desc']:
                 desc = stream['info']['desc'][0]
                 
-                # Handle nested structure
+                # Handle nested structure - try both paths
+                channels_list = None
+                
+                # Path 1: desc -> channels -> channel (original nested structure)
                 if hasattr(desc, 'get') and 'channels' in desc:
                     channels_info = desc['channels']
                     if isinstance(channels_info, list) and len(channels_info) > 0:
                         channels_dict = channels_info[0]
                         if hasattr(channels_dict, 'get') and 'channel' in channels_dict:
-                            for ch_info in channels_dict['channel']:
-                                if hasattr(ch_info, 'get'):
-                                    label = ch_info.get('label', [''])[0] if 'label' in ch_info else ''
-                                    if label:
-                                        channel_labels.append(label)
+                            channels_list = channels_dict['channel']
+                
+                # Path 2: desc -> channel (flatter structure, e.g., eye tracker)
+                if channels_list is None and hasattr(desc, 'get') and 'channel' in desc:
+                    channels_list = desc['channel']
+                
+                # Extract all available metadata from channel list
+                if channels_list:
+                    for ch_idx, ch_info in enumerate(channels_list):
+                        if hasattr(ch_info, 'get'):
+                            # Extract label
+                            label = ch_info.get('label', [''])[0] if 'label' in ch_info else ''
+                            
+                            # If label is empty, generate a default one
+                            if not label:
+                                label = f"Channel_{ch_idx+1}"
+                            
+                            # Dynamically extract all other metadata fields
+                            metadata = {'label': label}
+                            for key in ch_info.keys():
+                                if key != 'label':  # label already extracted
+                                    value = ch_info.get(key, [''])
+                                    # Handle both list and non-list values
+                                    if isinstance(value, list) and len(value) > 0:
+                                        metadata[key] = value[0]
+                                    elif not isinstance(value, list):
+                                        metadata[key] = value
+                                    else:
+                                        metadata[key] = ''
+                            
+                            # Make label unique by appending eye/index if needed
+                            # Check if this label already exists
+                            if label in channel_labels:
+                                # Try to make it unique with eye info
+                                eye_info = metadata.get('eye', '')
+                                if eye_info and eye_info != 'both':
+                                    unique_label = f"{label}_{eye_info}"
+                                else:
+                                    # Count how many times this label appears
+                                    count = channel_labels.count(label) + sum(1 for lbl in channel_labels if lbl.startswith(f"{label}_"))
+                                    unique_label = f"{label}_{count}"
+                                label = unique_label
+                                metadata['label'] = unique_label
+                            
+                            channel_labels.append(label)
+                            channel_metadata.append(metadata)
             
-            # Fallback to numbered channels
+            # Fallback to numbered channels if we don't have enough
             while len(channel_labels) < ch_count:
-                channel_labels.append(f"Channel_{len(channel_labels)+1}")
+                label = f"Channel_{len(channel_labels)+1}"
+                channel_labels.append(label)
+                channel_metadata.append({'label': label})
             
             # Fix potential collision with LSL timestamp column
-            # If any data channel is labeled 'time', rename it to avoid collision
             fixed_labels = []
-            for label in channel_labels[:ch_count]:
+            for i, label in enumerate(channel_labels[:ch_count]):
                 if label.lower() == 'time':
                     fixed_label = 'trial_time'
                     logger.warning(f"Renamed data channel '{label}' to '{fixed_label}' to avoid collision with LSL timestamps")
                     fixed_labels.append(fixed_label)
+                    channel_metadata[i]['label'] = fixed_label
                 else:
                     fixed_labels.append(label)
             
-            return fixed_labels
+            logger.debug(f"Extracted {len(fixed_labels)} channel labels from stream with {ch_count} channels")
+            return fixed_labels, channel_metadata[:ch_count]
             
         except Exception as e:
             logger.warning(f"Error extracting channel labels: {e}")
             ch_count = int(stream['info'].get('channel_count', ['1'])[0])
-            return [f"Channel_{i+1}" for i in range(ch_count)]
-
-         
+            labels = [f"Channel_{i+1}" for i in range(ch_count)]
+            metadata = [{'label': label} for label in labels]
+            return labels, metadata
 
     def _find_overlap_window(self) -> Tuple[float, float]:
         """Find time window where all data streams overlap"""
@@ -525,7 +579,7 @@ class XDFProcessor:
             # Extract data in time window
             timestamps = stream['time_stamps']
             data = stream['time_series']
-            channel_labels = self._get_channel_labels(stream)
+            channel_labels, channel_metadata = self._get_channel_labels(stream)
             
             # Filter to overlap window
             mask = (timestamps >= start_time) & (timestamps <= end_time)
@@ -550,6 +604,7 @@ class XDFProcessor:
                 'effective_srate': float(stream['info'].get('effective_srate', ['0'])),
                 'type': stream['info'].get('type', [''])[0],
                 'channel_labels': channel_labels,
+                'channel_metadata': channel_metadata,  # Store full channel metadata
                 'samples': len(windowed_data)
             }
         
@@ -688,13 +743,19 @@ class XDFProcessor:
                 
                 # Save JSON sidecar
                 json_path = f"{base_path}_{stream_type}.json"
+                
+                # Get actual channel count from data, not from stream info
+                actual_channel_count = len(df.columns) - 1  # Subtract 1 for 'time' column
+                channel_metadata_list = metadata.get('channel_metadata', [])
+                
                 sidecar = {
                     "SamplingFrequency": metadata.get('nominal_srate', 'n/a'),
                     "StartTime": start_time,
                     "Columns": list(df.columns),
                     "StreamType": stream_type,
                     "StreamName": metadata.get('name', 'Unknown'),
-                    "ChannelCount": metadata.get('channel_count', len(df.columns) - 1),
+                    "ChannelCount": actual_channel_count,
+                    "ChannelMetadata": channel_metadata_list[:actual_channel_count] if channel_metadata_list else None,
                     "Description": f"Data from {stream_type} stream",
                     "TimingInfo": {
                         "use_relative_time": use_relative_time,
@@ -703,6 +764,9 @@ class XDFProcessor:
                         "time_window": results['time_window']
                     }
                 }
+                
+                # Remove None values
+                sidecar = {k: v for k, v in sidecar.items() if v is not None}
                 
                 with open(json_path, 'w') as f:
                     json.dump(sidecar, f, indent=2)
