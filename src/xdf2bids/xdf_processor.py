@@ -76,6 +76,54 @@ DUPLICATE_ONSET_DECIMALS = 3
 IGNORE_FOR_OVERLAP = ['online_cop']
 
 WARNING_THRESHOLD = 0.3  # seconds
+
+STREAM_PATTERNS = {
+    'wii': 
+        {'name': ['wii'], 
+         'type': ['mocap'], 
+         'matching':'pattern'},
+        
+    'kinect': 
+        {'name': ['kinect', "kinectv2"], 
+         'type': ['mocap', 'position'], 
+         'matching':'pattern'},
+        
+    'eye_tracker': 
+        {'name': ['neurolab_neon gaze'], 
+         'type': ['gaze'], 
+         'matching':'pattern'},
+        
+    'eye_tracker_events': 
+        {'name': ['neurolab_neon events'], 
+         'type': ['event'], 
+         'matching':'pattern'},
+
+    'eeg':
+        {'name': ['liveamp'],
+         'type': ['eeg', 'biosignal'],
+         'matching':'pattern'},
+    
+    'online_cop':
+        {'name': ['cop'],
+            'type': ['cop'],
+            'matching':'pattern'},
+        
+    'stimulus': 
+        {'name': ['vr_bodysway', 'stimulus', 'stim'], 
+         'type': ['timeseries'], 
+         'matching':'pattern'},
+        
+    'marker': 
+        {'name': ['marker', 'event', 'trigger'], 
+         'type': ['marker', 'event'], 
+         'matching':'pattern'},
+        
+    'meta': 
+        {'name': ['trial_meta'], 
+         'type': ['marker', 'meta'], 
+         'matching':'pattern'},
+}
+
 class XDFProcessor:
     """Simplified XDF processor focused on loading and BIDS export"""
 
@@ -83,47 +131,8 @@ class XDFProcessor:
         """Initialize with basic configuration."""
 
         # Basic stream identification patterns
-        self.stream_patterns = {
-            'wii': 
-                {'name': ['wii'], 
-                 'type': ['mocap'], 
-                 'matching':'pattern'},
-                
-            'kinect': 
-                {'name': ['kinect', "kinectv2"], 
-                 'type': ['mocap', 'position'], 
-                 'matching':'pattern'},
-                
-            'eye_tracker': 
-                {'name': ['neurolab_neon gaze'], 
-                 'type': ['gaze'], 
-                 'matching':'pattern'},
-                
-            'eye_tracker_events': 
-                {'name': ['neurolab_neon events'], 
-                 'type': ['event'], 
-                 'matching':'pattern'},
-            
-            'online_cop':
-                {'name': ['cop'],
-                    'type': ['cop'],
-                    'matching':'pattern'},
-                
-            'stimulus': 
-                {'name': ['vr_bodysway', 'stimulus', 'stim'], 
-                 'type': ['timeseries'], 
-                 'matching':'pattern'},
-                
-            'marker': 
-                {'name': ['marker', 'event', 'trigger'], 
-                 'type': ['marker', 'event'], 
-                 'matching':'pattern'},
-                
-            'meta': 
-                {'name': ['trial_meta'], 
-                 'type': ['marker', 'meta'], 
-                 'matching':'pattern'},
-        }
+        self.stream_patterns = STREAM_PATTERNS.copy()
+
         if 'stream_patterns' in kwargs:
             self.stream_patterns.update(kwargs['stream_patterns'])
 
