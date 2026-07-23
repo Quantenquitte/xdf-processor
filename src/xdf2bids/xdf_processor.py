@@ -89,7 +89,7 @@ STREAM_PATTERNS = {
          'matching':'pattern'},
         
     'eye_tracker': 
-        {'name': ['neurolab_neon gaze'], 
+        {'name': ['neurolab_neon gaze', 'EyeLink'], 
          'type': ['gaze'], 
          'matching':'pattern'},
         
@@ -99,7 +99,7 @@ STREAM_PATTERNS = {
          'matching':'pattern'},
 
     'eeg':
-        {'name': ['liveamp'],
+        {'name': ['liveamp', 'actichamp],
          'type': ['eeg', 'biosignal'],
          'matching':'pattern'},
     
