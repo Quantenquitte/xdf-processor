@@ -514,6 +514,41 @@ class XDFProcessor:
             metadata = [{'label': label} for label in labels]
             return labels, metadata
 
+    def _select_one_stream_per_type(self):
+        """Keep one data stream per kind: the one with the most samples during the experiment.
+
+        Without this the stream that happens to come last in the file wins,
+        even if it was recorded after the experiment had ended. "During the
+        experiment" is the span from the first to the last event; if there are
+        no events, the whole stream counts. Ties keep the later stream.
+        """
+        onsets = [float(e['onset']) for e in (self.events or []) if e.get('onset') is not None]
+        span = (min(onsets), max(onsets)) if onsets else None
+
+        def samples_during_experiment(stream):
+            t = stream['time_stamps']
+            return int(((t >= span[0]) & (t <= span[1])).sum()) if span else len(t)
+
+        by_type: Dict[str, list] = {}
+        for stream in self.data_streams:
+            by_type.setdefault(self._classify_stream(stream), []).append(stream)
+
+        kept = []
+        for stream_type, candidates in by_type.items():
+            best = candidates[0]
+            for stream in candidates[1:]:
+                if samples_during_experiment(stream) >= samples_during_experiment(best):
+                    best = stream
+            if len(candidates) > 1:
+                logger.warning(
+                    f"{len(candidates)} '{stream_type}' streams in the file "
+                    f"({[samples_during_experiment(c) for c in candidates]} samples during the experiment); "
+                    f"using the one with {samples_during_experiment(best)}."
+                )
+            kept.append(best)
+        # keep the original order of the file
+        self.data_streams = [s for s in self.data_streams if any(s is k for k in kept)]
+
     def _find_overlap_window(self) -> Tuple[float, float]:
         """Find time window where all data streams overlap"""
         if not self.data_streams:
@@ -570,6 +605,10 @@ class XDFProcessor:
         self._extract_trials_from_events(trial_event_type)
         self._extract_perturbations_from_events()
         
+        # A file can contain several streams of the same kind (a device that
+        # was restarted, a stream recorded twice). Keep one per kind.
+        self._select_one_stream_per_type()
+
         # Find overlap window
         start_time, end_time = self._find_overlap_window()
         
