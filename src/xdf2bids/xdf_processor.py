@@ -55,9 +55,8 @@ except (ImportError, ModuleNotFoundError) as e:
 
 from xdf2bids.utils import parse_event_string
 
+# A library does not configure output: the calling program decides level and handlers.
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG) # console output
-logger.addHandler(logging.StreamHandler())
 
 
 SAVE_FOLDER = 'data/preprocessed/debug'
@@ -165,6 +164,9 @@ class XDFProcessor:
         logger.debug(f"Loading XDF file: {xdf_file}")
         
         try:
+            # pyxdf warns for every stream whose measured rate differs from the nominal one; for
+            # the event-driven streams of these recordings (COP_Output, Kinect) that is normal.
+            logging.getLogger('pyxdf.pyxdf').setLevel(logging.ERROR)
             self.streams, self.header = pyxdf.load_xdf(xdf_file)
         except ImportError as e:
             raise ImportError(f"Failed to load XDF file due to pyxdf import error: {e}")
@@ -279,7 +281,7 @@ class XDFProcessor:
                         meta_records.append(parsed)
 
         if not meta_records:
-            logger.warning("No meta events found in the streams")
+            logger.debug("No meta events found in the streams")   # trial_meta is part of the event stream
             self.meta = []
             return
 
@@ -342,7 +344,8 @@ class XDFProcessor:
                 if current_onset + current_duration > next_onset:
                     corrected_duration = next_onset - current_onset
                     if np.abs(corrected_duration - current_duration) > WARNING_THRESHOLD: 
-                        logger.warning(f"Correcting trial {i} duration from {current_duration} to {corrected_duration}")
+                        # Routine: pauses and countdowns carry a planned duration of up to 10000 s
+                        logger.debug(f"Correcting trial {i} duration from {current_duration} to {corrected_duration}")
                     events.at[events.index[i], 'duration'] = corrected_duration
 
         else:
