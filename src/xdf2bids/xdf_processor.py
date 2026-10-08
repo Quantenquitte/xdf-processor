@@ -131,6 +131,11 @@ class XDFProcessor:
 
         # Basic stream identification patterns
         self.stream_patterns = STREAM_PATTERNS.copy()
+        # pyxdf's jitter removal fits a straight line to the time stamps of every stream with a
+        # nominal rate; that moves the samples of streams which drop samples or change their
+        # rate (Kinect, Neon) by hundreds of ms. Default False: the recorded time stamps; True only
+        # for devices with their own constant-rate clock (e.g. an EEG amplifier).
+        self.dejitter_timestamps = kwargs.get('dejitter_timestamps', False)
 
         if 'stream_patterns' in kwargs:
             self.stream_patterns.update(kwargs['stream_patterns'])
@@ -167,7 +172,7 @@ class XDFProcessor:
             # pyxdf warns for every stream whose measured rate differs from the nominal one; for
             # the event-driven streams of these recordings (COP_Output, Kinect) that is normal.
             logging.getLogger('pyxdf.pyxdf').setLevel(logging.ERROR)
-            self.streams, self.header = pyxdf.load_xdf(xdf_file)
+            self.streams, self.header = pyxdf.load_xdf(xdf_file, dejitter_timestamps=self.dejitter_timestamps)
         except ImportError as e:
             raise ImportError(f"Failed to load XDF file due to pyxdf import error: {e}")
         
