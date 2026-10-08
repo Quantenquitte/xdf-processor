@@ -403,7 +403,6 @@ class XDFProcessor:
             logger.debug(f"Extracted {len(self.perturbations)} perturbation events")
 
         except AssertionError as e:
-            logger.warning(f"Mismatched perturbation start/end counts: {e}")
             if len(perturbation_starts) - len(perturbation_ends) == 1:
                 logger.warning("Possible missing perturbation end event, using last start as end")
                 
@@ -413,9 +412,9 @@ class XDFProcessor:
                     start['source'] = start['source']
                 self.perturbations = perturbation_starts
             else:
-                logger.error(f"Unable to resolve perturbation events due to mismatched counts: {e}")
-                logger.debug("Number of starts: {}, Number of ends: {}".format(
-                    len(perturbation_starts), len(perturbation_ends)))
+                # The PERTURBATION_START events stay in the event table; only this pairing fails
+                logger.warning(f"{len(perturbation_starts)} perturbation starts but {len(perturbation_ends)} ends: "
+                               f"perturbation table left empty")
                 self.perturbations = []
 
     def _get_channel_labels(self, stream: Dict[str, Any]) -> Tuple[List[str], List[Dict[str, str]]]:
