@@ -196,7 +196,8 @@ class XDFProcessor:
                 self.marker_streams.append(stream)
             # sort out empty streams
             elif ('time_stamps' not in stream or len(stream['time_stamps']) == 0):
-                logger.warning(f"Stream '{stream['info'].get('name', ['Unnamed'])[0]}' is empty, skipping.")
+                # routine: recordings often hold empty copies of a stream
+                logger.debug(f"Stream '{stream['info'].get('name', ['Unnamed'])[0]}' is empty, skipping.")
             else:
                 self.data_streams.append(stream)
 
@@ -417,8 +418,9 @@ class XDFProcessor:
                     start['source'] = start['source']
                 self.perturbations = perturbation_starts
             else:
-                # The PERTURBATION_START events stay in the event table; only this pairing fails
-                logger.warning(f"{len(perturbation_starts)} perturbation starts but {len(perturbation_ends)} ends: "
+                # Routine (most recordings lack PERTURBATION_END markers); the PERTURBATION_START events
+                # stay in the event table, only this pairing fails
+                logger.debug(f"{len(perturbation_starts)} perturbation starts but {len(perturbation_ends)} ends: "
                                f"perturbation table left empty")
                 self.perturbations = []
 
